@@ -77,27 +77,35 @@ struct ComposeProject: Equatable {
 
 struct ColimaSnapshot: Equatable {
     let running: Bool
+    let vmInfo: String?      // 例: "CPU 2 ・ メモリ 12GB ・ ディスク 100GB"
     let containers: [Container]
     let composeProjects: [ComposeProject]
+}
+
+struct ContainerStats: Equatable {
+    let cpu: String  // 例: "0.05%"
+    let mem: String  // 例: "5.8MiB"
 }
 
 enum ColimaService {
     /// Colima の状態と起動中コンテナをまとめて取得する(バックグラウンドキューで呼ぶこと)
     static func fetchSnapshot() -> ColimaSnapshot {
-        guard isRunning() else {
-            return ColimaSnapshot(running: false, containers: [], composeProjects: [])
+        let status = colimaStatus()
+        guard status.running else {
+            return ColimaSnapshot(running: false, vmInfo: nil, containers: [], composeProjects: [])
         }
         return ColimaSnapshot(
             running: true,
+            vmInfo: status.vmInfo,
             containers: listContainers(),
             composeProjects: listComposeProjects()
         )
     }
 
-    private static func isRunning() -> Bool {
+    private static func colimaStatus() -> (running: Bool, vmInfo: String?) {
         // `colima ls --json` はプロファイルごとに 1 行の JSON を返す
         let result = Shell.run("colima ls --json")
-        guard result.status == 0 else { return false }
+        guard result.status == 0 else { return (false, nil) }
 
         for line in result.stdout.split(separator: "\n") {
             guard
@@ -106,10 +114,43 @@ enum ColimaService {
                 let status = json["status"] as? String
             else { continue }
             if status.lowercased() == "running" {
-                return true
+                var parts: [String] = []
+                if let cpus = (json["cpus"] as? NSNumber)?.intValue {
+                    parts.append("CPU \(cpus)")
+                }
+                if let memory = (json["memory"] as? NSNumber)?.int64Value, memory > 0 {
+                    parts.append("メモリ \(memory / (1 << 30))GB")
+                }
+                if let disk = (json["disk"] as? NSNumber)?.int64Value, disk > 0 {
+                    parts.append("ディスク \(disk / (1 << 30))GB")
+                }
+                return (true, parts.isEmpty ? nil : parts.joined(separator: " ・ "))
             }
         }
-        return false
+        return (false, nil)
+    }
+
+    /// 起動中コンテナの CPU / メモリ使用量(1 秒程度かかるのでスナップショットとは別に取る)
+    static func fetchStats() -> [String: ContainerStats] {
+        let result = Shell.run(#"docker stats --no-stream --format '{{json .}}'"#)
+        guard result.status == 0 else { return [:] }
+
+        var stats: [String: ContainerStats] = [:]
+        for line in result.stdout.split(separator: "\n") {
+            guard
+                let data = line.data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let id = json["Container"] as? String
+            else { continue }
+            let memUsage = ((json["MemUsage"] as? String) ?? "")
+                .components(separatedBy: " / ").first ?? ""
+            // stats の ID はフル 64 桁なので、docker ps に合わせて 12 桁に詰める
+            stats[String(id.prefix(12))] = ContainerStats(
+                cpu: (json["CPUPerc"] as? String) ?? "",
+                mem: memUsage
+            )
+        }
+        return stats
     }
 
     private static func listContainers() -> [Container] {

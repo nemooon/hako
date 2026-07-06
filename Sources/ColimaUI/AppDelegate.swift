@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var openRefreshTimer: Timer?
     // 自分で実行した操作(stop など)の結果まで通知しないためのフラグ
     private var suppressNotificationsOnce = false
+    // コンテナごとの CPU/メモリ使用量(取得が遅いのでメニューを開いている間だけ更新)
+    private var statsByID: [String: ContainerStats] = [:]
+    private var isFetchingStats = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -44,9 +47,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         refresh()
+        fetchStats()
         // 開いている間は短い間隔でリアルタイム更新(差分適用なので開いたままでも安全)
         let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
             self?.refresh()
+            self?.fetchStats()
         }
         RunLoop.main.add(timer, forMode: .common) // メニュー追跡中も発火させる
         openRefreshTimer = timer
@@ -70,6 +75,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 self.snapshot = snapshot
                 self.updateIcon()
+                self.rebuildMenu()
+            }
+        }
+    }
+
+    private func fetchStats() {
+        guard snapshot?.running == true, !isFetchingStats else { return }
+        isFetchingStats = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let stats = ColimaService.fetchStats()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isFetchingStats = false
+                guard self.statsByID != stats else { return }
+                self.statsByID = stats
                 self.rebuildMenu()
             }
         }
@@ -226,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return [.info("状態を確認中…"), .separator, quit]
         }
 
-        var entries = [colimaStatusEntry(running: snapshot.running)]
+        var entries = [colimaStatusEntry(snapshot)]
         if snapshot.running {
             entries.append(.separator)
             entries += containerEntries(snapshot)
@@ -265,8 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// 「Colima: 実行中/停止中」+ 起動・再起動・停止のサブメニュー(状態に応じて disabled)
-    private func colimaStatusEntry(running: Bool) -> MenuEntry {
-        var entry = MenuEntry.info(running ? "Colima: 実行中" : "Colima: 停止中")
+    /// 実行中は 2 行目に VM の割り当て(CPU/メモリ/ディスク)を出す
+    private func colimaStatusEntry(_ snapshot: ColimaSnapshot) -> MenuEntry {
+        let running = snapshot.running
+        var entry = MenuEntry.info(running ? "Colima: 実行中" : "Colima: 停止中", subtitle: snapshot.vmInfo)
         entry.isEnabled = true
         entry.children = [
             .action("起動", #selector(startColima), icon: "play.fill", enabled: !running),
@@ -330,6 +352,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// コンテナ単体の操作メニュー(状態に応じて disabled)
     private func containerActionChildren(_ container: Container) -> [MenuEntry] {
         var children: [MenuEntry] = []
+
+        // CPU / メモリ使用量(取得済みの場合のみ)
+        if container.isRunning, let stats = statsByID[container.id] {
+            var statsEntry = MenuEntry.info("CPU \(stats.cpu) ・ メモリ \(stats.mem)")
+            statsEntry.icon = "gauge"
+            children.append(statsEntry)
+            children.append(.separator)
+        }
 
         // 公開ポートをブラウザで開く(⌥ で URL コピーに切り替わる)
         for port in container.ports {
