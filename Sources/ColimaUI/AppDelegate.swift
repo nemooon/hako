@@ -90,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var action: Selector?
         var keyEquivalent = ""
         var representedObject: Any?
+        var isAlternate = false    // ⌥ を押している間だけ直前の項目と入れ替わる
+        var modifiers: NSEvent.ModifierFlags = []
         var children: [MenuEntry]?
 
         static let separator = MenuEntry(isSeparator: true)
@@ -206,15 +208,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return entry
     }
 
-    /// コンテナ単体の 起動/再起動/停止(状態に応じて disabled)
+    /// コンテナ単体の操作メニュー(状態に応じて disabled)
     private func containerActionChildren(_ container: Container) -> [MenuEntry] {
-        [
-            .action("起動", #selector(startContainer(_:)), icon: "play.fill", enabled: !container.isRunning, represented: container.name),
-            .action("再起動", #selector(restartContainer(_:)), icon: "arrow.clockwise", enabled: container.isRunning, represented: container.name),
-            .action("停止", #selector(stopContainer(_:)), icon: "stop.fill", enabled: container.isRunning, represented: container.name),
-            .separator,
-            .action("破棄", #selector(removeContainer(_:)), icon: "trash", destructive: true, represented: container.name),
-        ]
+        var children: [MenuEntry] = []
+
+        // 公開ポートをブラウザで開く(⌥ で URL コピーに切り替わる)
+        for port in container.ports {
+            children.append(.action(
+                "localhost:\(port.host) を開く", #selector(openPort(_:)),
+                icon: "globe",
+                enabled: container.isRunning,
+                represented: port.host
+            ))
+            var copy = MenuEntry.action(
+                "localhost:\(port.host) をコピー", #selector(copyText(_:)),
+                icon: "doc.on.doc",
+                represented: "localhost:\(port.host)"
+            )
+            copy.isAlternate = true
+            copy.modifiers = .option
+            children.append(copy)
+        }
+        if !container.ports.isEmpty {
+            children.append(.separator)
+        }
+
+        children.append(.action(
+            "ターミナルで接続", #selector(openShell(_:)),
+            icon: "terminal",
+            enabled: container.isRunning,
+            represented: container.name
+        ))
+        children.append(.action("ログを見る", #selector(showLogs(_:)), icon: "text.alignleft", represented: container.name))
+        children.append(.action("名前をコピー", #selector(copyText(_:)), icon: "doc.on.doc", represented: container.name))
+        children.append(.separator)
+
+        children.append(.action("起動", #selector(startContainer(_:)), icon: "play.fill", enabled: !container.isRunning, represented: container.name))
+        children.append(.action("再起動", #selector(restartContainer(_:)), icon: "arrow.clockwise", enabled: container.isRunning, represented: container.name))
+        children.append(.action("停止", #selector(stopContainer(_:)), icon: "stop.fill", enabled: container.isRunning, represented: container.name))
+        children.append(.separator)
+        children.append(.action("破棄", #selector(removeContainer(_:)), icon: "trash", destructive: true, represented: container.name))
+        return children
     }
 
     private func composeEntry(project: ComposeProject, group: [Container]) -> MenuEntry {
@@ -263,6 +297,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             child.children = containerActionChildren(container)
             children.append(child)
         }
+        children.append(.separator)
+
+        // compose ファイルの場所からプロジェクトディレクトリを割り出す
+        let projectDir = project.configFiles.first
+            .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+        children.append(.action(
+            "Zed で開く", #selector(openProjectInZed(_:)),
+            icon: "curlybraces",
+            enabled: projectDir != nil,
+            represented: projectDir
+        ))
         children.append(.separator)
 
         children.append(.action(
@@ -343,6 +388,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.action = entry.action
         item.target = entry.action != nil ? self : nil
         item.keyEquivalent = entry.keyEquivalent
+        item.keyEquivalentModifierMask = entry.modifiers
+        item.isAlternate = entry.isAlternate
         item.representedObject = entry.representedObject
 
         if let children = entry.children {
@@ -451,6 +498,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         runBusy(message: "\(name) を破棄中…", command: "docker rm -f '\(name)'")
+    }
+
+    @objc private func openPort(_ sender: NSMenuItem) {
+        guard let port = sender.representedObject as? String,
+              let url = URL(string: "http://localhost:\(port)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func copyText(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc private func openShell(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        // bash があれば bash、なければ sh
+        openInTerminal("docker exec -it '\(name)' /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'")
+    }
+
+    @objc private func showLogs(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        openInTerminal("docker logs -f --tail 200 '\(name)'")
+    }
+
+    @objc private func openProjectInZed(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        Shell.runAsync("open -a Zed '\(path)'") { [weak self] result in
+            if result.status != 0 {
+                self?.showError(command: "open -a Zed", detail: result.stderr)
+            }
+        }
+    }
+
+    /// Terminal.app で新しいウインドウを開いてコマンドを実行する
+    private func openInTerminal(_ command: String) {
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "\(escaped)"
+        end tell
+        """
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Shell.runProgram("/usr/bin/osascript", ["-e", script])
+            if result.status != 0 {
+                DispatchQueue.main.async {
+                    self?.showError(command: "osascript", detail: result.stderr)
+                }
+            }
+        }
     }
 
     @objc private func quitApp() {

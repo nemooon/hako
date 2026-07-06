@@ -10,9 +10,15 @@ enum Shell {
     /// Homebrew のパスを含めたうえでコマンドを同期実行する(呼び出し側でバックグラウンドキューに載せること)
     @discardableResult
     static func run(_ command: String) -> Result {
+        runProgram("/bin/zsh", ["-c", command])
+    }
+
+    /// シェルを介さず実行する(AppleScript などクォートが厄介なもの向け)
+    @discardableResult
+    static func runProgram(_ path: String, _ arguments: [String]) -> Result {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
 
         var env = ProcessInfo.processInfo.environment
         let extraPaths = ["/opt/homebrew/bin", "/usr/local/bin"]
