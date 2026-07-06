@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
@@ -9,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var busyMessage: String?
     private var refreshTimer: Timer?
     private var openRefreshTimer: Timer?
+    // 自分で実行した操作(stop など)の結果まで通知しないためのフラグ
+    private var suppressNotificationsOnce = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -23,6 +26,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+
+        // スリープ復帰時は即リフレッシュ(次のポーリングを待たない)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(didWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func didWake() {
+        refresh()
     }
 
     // MARK: - NSMenuDelegate
@@ -50,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let snapshot = ColimaService.fetchSnapshot()
             DispatchQueue.main.async {
                 guard let self, self.snapshot != snapshot else { return }
+                if let old = self.snapshot {
+                    self.notifyStateChanges(from: old, to: snapshot)
+                }
                 self.snapshot = snapshot
                 self.updateIcon()
                 self.rebuildMenu()
@@ -57,23 +75,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// ポート公開しているコンテナが勝手に落ちたり unhealthy になったら通知する
+    private func notifyStateChanges(from old: ColimaSnapshot, to new: ColimaSnapshot) {
+        if suppressNotificationsOnce {
+            suppressNotificationsOnce = false
+            return
+        }
+        // colima 自体の起動/停止では全コンテナが一斉に変わるので対象外
+        guard old.running, new.running else { return }
+
+        let oldByID = Dictionary(uniqueKeysWithValues: old.containers.map { ($0.id, $0) })
+        for container in new.containers {
+            guard !container.ports.isEmpty, let prev = oldByID[container.id] else { continue }
+
+            let label: String
+            if let service = container.composeService, let project = container.composeProject {
+                label = "\(project) の \(service)"
+            } else {
+                label = container.name
+            }
+
+            if prev.isRunning && !container.isRunning {
+                notify(title: "コンテナが停止しました", body: label)
+            } else if container.isRunning,
+                      container.status.contains("unhealthy"),
+                      !prev.status.contains("unhealthy") {
+                notify(title: "コンテナが unhealthy です", body: label)
+            }
+        }
+    }
+
+    /// macOS 通知を出す(osascript 経由なのでバンドル化していなくても動く)
+    private func notify(title: String, body: String) {
+        func escape(_ text: String) -> String {
+            text.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        let script = "display notification \"\(escape(body))\" with title \"\(escape(title))\""
+        DispatchQueue.global(qos: .utility).async {
+            Shell.runProgram("/usr/bin/osascript", ["-e", script])
+        }
+    }
+
     private func updateIcon() {
         let symbolName: String
         let description: String
+        var tint: NSColor?
         if busyMessage != nil {
             symbolName = "shippingbox.circle"
             description = "Colima: 処理中"
         } else if snapshot?.running == true {
             symbolName = "shippingbox.fill"
-            description = "Colima: 実行中"
+            if hasWarning() {
+                description = "Colima: 実行中(停止中のサービスあり)"
+                tint = .systemOrange
+            } else {
+                description = "Colima: 実行中"
+            }
         } else {
             symbolName = "shippingbox"
             description = "Colima: 停止中"
         }
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)
-        image?.isTemplate = true
+
+        let image: NSImage?
+        if let tint {
+            let config = NSImage.SymbolConfiguration(paletteColors: [tint])
+            image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)?
+                .withSymbolConfiguration(config)
+        } else {
+            image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)
+            image?.isTemplate = true
+        }
         statusItem.button?.image = image
         statusItem.button?.toolTip = description
+    }
+
+    /// いずれかの compose プロジェクトがオレンジ状態(稼働中なのにポート公開すべき
+    /// コンテナが落ちている)かどうか
+    private func hasWarning() -> Bool {
+        guard let snapshot, snapshot.running else { return false }
+        var groups: [String: [Container]] = [:]
+        for container in snapshot.containers {
+            if let project = container.composeProject {
+                groups[project, default: []].append(container)
+            }
+        }
+        return groups.values.contains { group in
+            group.contains(where: \.isRunning)
+                && group.contains { !$0.isRunning && !$0.ports.isEmpty }
+        }
     }
 
     // MARK: - Menu model
@@ -92,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var representedObject: Any?
         var isAlternate = false    // ⌥ を押している間だけ直前の項目と入れ替わる
         var modifiers: NSEvent.ModifierFlags = []
+        var isChecked = false      // チェックマーク付き(トグル項目用)
         var children: [MenuEntry]?
 
         static let separator = MenuEntry(isSeparator: true)
@@ -141,8 +232,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             entries += containerEntries(snapshot)
         }
         entries.append(.separator)
+        entries.append(launchAtLoginEntry())
         entries.append(quit)
         return entries
+    }
+
+    /// 「ログイン時に起動」トグル。.app バンドルとして動いているときだけ有効
+    /// (swift run の素の実行ファイルでは SMAppService が使えない)
+    private func launchAtLoginEntry() -> MenuEntry {
+        let isBundled = Bundle.main.bundleURL.pathExtension == "app"
+        var entry = MenuEntry.action(
+            "ログイン時に起動",
+            #selector(toggleLaunchAtLogin),
+            enabled: isBundled
+        )
+        entry.isChecked = isBundled && SMAppService.mainApp.status == .enabled
+        return entry
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+        } catch {
+            showError(command: "ログイン項目の変更", detail: error.localizedDescription)
+        }
+        rebuildMenu()
     }
 
     /// 「Colima: 実行中/停止中」+ 起動・再起動・停止のサブメニュー(状態に応じて disabled)
@@ -390,6 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.keyEquivalent = entry.keyEquivalent
         item.keyEquivalentModifierMask = entry.modifiers
         item.isAlternate = entry.isAlternate
+        item.state = entry.isChecked ? .on : .off
         item.representedObject = entry.representedObject
 
         if let children = entry.children {
@@ -565,6 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Shell.runAsync(command) { [weak self] result in
             guard let self else { return }
             self.busyMessage = nil
+            self.suppressNotificationsOnce = true // 自分の操作による変化は通知しない
             if result.status != 0 {
                 self.showError(command: command, detail: result.stderr)
             }
