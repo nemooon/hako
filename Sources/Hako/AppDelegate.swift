@@ -237,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func buildEntries() -> [MenuEntry] {
-        let quit = MenuEntry.action("Colima UI を終了", #selector(quitApp), key: "q")
+        let quit = MenuEntry.action("Hako を終了", #selector(quitApp), key: "q")
 
         if let busyMessage {
             return [.info(busyMessage), .separator, quit]

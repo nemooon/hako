@@ -1,4 +1,4 @@
-# Colima UI
+# Hako
 
 macOS のメニューバーに常駐し、[Colima](https://github.com/abiosoft/colima) とコンテナの状態を表示・操作する小さなアプリ。
 
@@ -47,7 +47,7 @@ swift run
 
 ```sh
 ./scripts/bundle.sh
-open dist   # "Colima UI.app" をアプリケーションフォルダへ
+open dist   # "Hako.app" をアプリケーションフォルダへ
 ```
 
 ログイン時の自動起動は、メニュー下部の「ログイン時に起動」から設定できます。

@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "ColimaUI",
+    name: "Hako",
     platforms: [
         .macOS("14.4") // NSMenuItem.subtitle を使うため
     ],
     targets: [
         .executableTarget(
-            name: "ColimaUI",
-            path: "Sources/ColimaUI"
+            name: "Hako",
+            path: "Sources/Hako"
         )
     ]
 )

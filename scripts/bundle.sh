@@ -4,8 +4,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP_NAME="Colima UI"
-BUNDLE_ID="com.nemoto.colima-ui"
+APP_NAME="Hako"
+BUNDLE_ID="com.nemoto.hako"
 DIST="dist/${APP_NAME}.app"
 
 swift build -c release
@@ -13,7 +13,7 @@ swift build -c release
 rm -rf "$DIST"
 mkdir -p "$DIST/Contents/MacOS"
 
-cp .build/release/ColimaUI "$DIST/Contents/MacOS/ColimaUI"
+cp .build/release/Hako "$DIST/Contents/MacOS/Hako"
 
 cat > "$DIST/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -21,7 +21,7 @@ cat > "$DIST/Contents/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>ColimaUI</string>
+    <string>Hako</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleName</key>
