@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="Hako"
-BUNDLE_ID="com.nemoto.hako"
+BUNDLE_ID="com.nemooon.hako"
 DIST="dist/${APP_NAME}.app"
 
 swift build -c release
