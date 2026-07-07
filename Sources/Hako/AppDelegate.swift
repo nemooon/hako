@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // コンテナごとの CPU/メモリ使用量(取得が遅いのでメニューを開いている間だけ更新)
     private var statsByID: [String: ContainerStats] = [:]
     private var isFetchingStats = false
+    // ディスク使用量(取得が遅いのでメニューを開いたときだけ更新)
+    private var diskUsage: [DiskUsage] = []
+    private var isFetchingDiskUsage = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -48,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         refresh()
         fetchStats()
+        fetchDiskUsage()
         // 開いている間は短い間隔でリアルタイム更新(差分適用なので開いたままでも安全)
         let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -90,6 +94,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.isFetchingStats = false
                 guard self.statsByID != stats else { return }
                 self.statsByID = stats
+                self.rebuildMenu()
+            }
+        }
+    }
+
+    /// ディスク使用量はほとんど変わらないので、メニューを開いたときだけ取得する
+    private func fetchDiskUsage() {
+        guard snapshot?.running == true, !isFetchingDiskUsage else { return }
+        isFetchingDiskUsage = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let usage = ColimaService.fetchDiskUsage()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isFetchingDiskUsage = false
+                guard self.diskUsage != usage else { return }
+                self.diskUsage = usage
                 self.rebuildMenu()
             }
         }
@@ -287,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         var entries = [colimaStatusEntry(snapshot)]
         if snapshot.running {
+            entries.append(diskUsageEntry())
             entries.append(.separator)
             entries += containerEntries(snapshot)
         }
@@ -294,6 +315,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         entries.append(settingsEntry())
         entries.append(quit)
         return entries
+    }
+
+    /// 「ディスク使用量」サブメニュー(内訳の表示+お掃除アクション)
+    private func diskUsageEntry() -> MenuEntry {
+        var entry = MenuEntry.info("ディスク使用量")
+        entry.isEnabled = true
+
+        var children: [MenuEntry] = []
+        if diskUsage.isEmpty {
+            children.append(.info("取得中…"))
+        } else {
+            for usage in diskUsage {
+                children.append(.info("\(usage.label): \(usage.size)", subtitle: "回収可能 \(usage.reclaimable)"))
+            }
+        }
+        children.append(.separator)
+        children.append(.action("未使用イメージを削除", #selector(pruneImages), icon: "trash", destructive: true))
+        children.append(.action("ビルドキャッシュを削除", #selector(pruneBuildCache), icon: "trash", destructive: true))
+        children.append(.action("未使用の匿名ボリュームを削除", #selector(pruneVolumes), icon: "trash", destructive: true))
+        entry.children = children
+        return entry
     }
 
     /// 「設定」サブメニュー(ログイン時に起動+エディタ選択)
@@ -670,18 +712,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runBusy(message: "\(project.name) を再起動中…", command: "docker compose -p '\(project.name)' restart")
     }
 
-    @objc private func downCompose(_ sender: NSMenuItem) {
-        guard let project = sender.representedObject as? ComposeProject else { return }
-
-        // コンテナごと削除されて一覧からも消えるので、確認を挟む
+    /// 破棄系アクションの確認ダイアログ。OK なら true
+    private func confirm(title: String, message: String, button: String) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "\(project.name) を破棄しますか?"
-        alert.informativeText = "docker compose down を実行します。コンテナとネットワークが削除され、このプロジェクトは一覧から消えます(ボリュームは残ります)。"
-        alert.addButton(withTitle: "破棄")
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: button)
         alert.addButton(withTitle: "キャンセル")
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    @objc private func downCompose(_ sender: NSMenuItem) {
+        guard let project = sender.representedObject as? ComposeProject else { return }
+        // コンテナごと削除されて一覧からも消えるので、確認を挟む
+        guard confirm(
+            title: "\(project.name) を破棄しますか?",
+            message: "docker compose down を実行します。コンテナとネットワークが削除され、このプロジェクトは一覧から消えます(ボリュームは残ります)。",
+            button: "破棄"
+        ) else { return }
 
         runBusy(message: "\(project.name) を破棄中…", command: "docker compose -p '\(project.name)' down")
     }
@@ -708,17 +758,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func removeContainer(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
-
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "\(name) を破棄しますか?"
-        alert.informativeText = "docker rm -f を実行します。コンテナが削除され、一覧から消えます(ボリュームは残ります)。"
-        alert.addButton(withTitle: "破棄")
-        alert.addButton(withTitle: "キャンセル")
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard confirm(
+            title: "\(name) を破棄しますか?",
+            message: "docker rm -f を実行します。コンテナが削除され、一覧から消えます(ボリュームは残ります)。",
+            button: "破棄"
+        ) else { return }
 
         runBusy(message: "\(name) を破棄中…", command: "docker rm -f '\(name)'")
+    }
+
+    // MARK: - お掃除(prune)
+
+    @objc private func pruneImages() {
+        guard confirm(
+            title: "未使用イメージを削除しますか?",
+            message: "docker image prune -a を実行します。どのコンテナにも使われていないイメージがすべて削除されます(必要になれば再ダウンロードされます)。",
+            button: "削除"
+        ) else { return }
+        diskUsage = [] // 古い数字を出さないよう、次にメニューを開いたとき取り直す
+        runBusy(message: "未使用イメージを削除中…", command: "docker image prune -a -f")
+    }
+
+    @objc private func pruneBuildCache() {
+        guard confirm(
+            title: "ビルドキャッシュを削除しますか?",
+            message: "docker builder prune を実行します。次回の docker build は遅くなりますが、動作には影響しません。",
+            button: "削除"
+        ) else { return }
+        diskUsage = []
+        runBusy(message: "ビルドキャッシュを削除中…", command: "docker builder prune -f")
+    }
+
+    @objc private func pruneVolumes() {
+        guard confirm(
+            title: "未使用の匿名ボリュームを削除しますか?",
+            message: "docker volume prune を実行します。どのコンテナにも使われていない匿名ボリュームが削除されます(名前付きボリュームは残ります)。",
+            button: "削除"
+        ) else { return }
+        diskUsage = []
+        runBusy(message: "未使用ボリュームを削除中…", command: "docker volume prune -f")
     }
 
     @objc private func openPort(_ sender: NSMenuItem) {

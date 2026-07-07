@@ -16,6 +16,7 @@ macOS のメニューバーに常駐し、[Colima](https://github.com/abiosoft/c
   - 各行に稼働状況(「4分前に起動」)・イメージ・ポート(`ホスト:コンテナ`)を表示
   - ポートなしの exited コンテナ(cli / init 系)はノイズになるので非表示
 - Colima VM の割り当て(CPU/メモリ/ディスク)と、コンテナごとの CPU/メモリ使用量(docker stats)
+- ディスク使用量の内訳(イメージ / コンテナ / ボリューム / ビルドキャッシュ、`docker system df`)
 - メニューを開いている間は 3 秒間隔でライブ更新
 
 ### 操作
@@ -26,6 +27,7 @@ macOS のメニューバーに常駐し、[Colima](https://github.com/abiosoft/c
 - 公開ポートをブラウザで開く(⌥ で URL コピーに切り替え)
 - ターミナルで接続(`docker exec`、bash/sh 自動判別)・ログ表示(`docker logs -f`)
 - compose プロジェクトをエディタで開く(Zed / VS Code / Cursor など、「設定」でインストール済みのエディタから選択)
+- ディスクのお掃除(未使用イメージ / ビルドキャッシュ / 匿名ボリュームの削除、確認あり)
 
 ### 常駐まわり
 

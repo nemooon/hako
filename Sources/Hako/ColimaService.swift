@@ -87,6 +87,23 @@ struct ContainerStats: Equatable {
     let mem: String  // 例: "5.8MiB"
 }
 
+struct DiskUsage: Equatable {
+    let type: String        // Images / Containers / Local Volumes / Build Cache
+    let size: String        // 例: "3.2GB"
+    let reclaimable: String // 例: "1.1GB (34%)"
+
+    /// メニュー表示用の日本語ラベル
+    var label: String {
+        switch type {
+        case "Images": return "イメージ"
+        case "Containers": return "コンテナ"
+        case "Local Volumes": return "ボリューム"
+        case "Build Cache": return "ビルドキャッシュ"
+        default: return type
+        }
+    }
+}
+
 enum ColimaService {
     /// Colima の状態と起動中コンテナをまとめて取得する(バックグラウンドキューで呼ぶこと)
     static func fetchSnapshot() -> ColimaSnapshot {
@@ -196,6 +213,27 @@ enum ColimaService {
             )
         }
         return stats
+    }
+
+    /// ディスク使用量の内訳(docker system df は 1 秒近くかかるのでスナップショットとは別に取る)
+    static func fetchDiskUsage() -> [DiskUsage] {
+        let result = Shell.run(#"docker system df --format '{{json .}}'"#)
+        guard result.status == 0 else { return [] }
+
+        var usages: [DiskUsage] = []
+        for line in result.stdout.split(separator: "\n") {
+            guard
+                let data = line.data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let type = json["Type"] as? String
+            else { continue }
+            usages.append(DiskUsage(
+                type: type,
+                size: (json["Size"] as? String) ?? "",
+                reclaimable: (json["Reclaimable"] as? String) ?? ""
+            ))
+        }
+        return usages
     }
 
     private static func listContainers() -> [Container] {
