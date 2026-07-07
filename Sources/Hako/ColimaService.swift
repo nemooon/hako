@@ -94,11 +94,56 @@ enum ColimaService {
         guard status.running else {
             return ColimaSnapshot(running: false, vmInfo: nil, containers: [], composeProjects: [])
         }
-        return ColimaSnapshot(
+        let snapshot = ColimaSnapshot(
             running: true,
             vmInfo: status.vmInfo,
             containers: listContainers(),
             composeProjects: listComposeProjects()
+        )
+        // HAKO_DEMO=1 で起動すると、スクリーンショット用に名前を架空のものへ置き換える
+        if ProcessInfo.processInfo.environment["HAKO_DEMO"] != nil {
+            return anonymize(snapshot)
+        }
+        return snapshot
+    }
+
+    // MARK: - デモモード
+
+    private static let demoNames = ["acme-shop", "blog-stack", "chat-api", "photo-share", "recipe-box", "todo-app"]
+
+    /// compose プロジェクト名(とそれを含むコンテナ名)を架空の名前に置き換える
+    private static func anonymize(_ snapshot: ColimaSnapshot) -> ColimaSnapshot {
+        let realNames = snapshot.composeProjects.map(\.name) + snapshot.containers.compactMap(\.composeProject)
+        var mapping: [String: String] = [:]
+        for (index, name) in Array(Set(realNames)).sorted().enumerated() {
+            let suffix = index < demoNames.count ? "" : "-\(index / demoNames.count + 1)"
+            mapping[name] = demoNames[index % demoNames.count] + suffix
+        }
+
+        func replace(_ text: String) -> String {
+            mapping.reduce(text) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
+        }
+
+        return ColimaSnapshot(
+            running: snapshot.running,
+            vmInfo: snapshot.vmInfo,
+            containers: snapshot.containers.map { c in
+                Container(
+                    id: c.id,
+                    name: replace(c.name),
+                    image: c.image,
+                    state: c.state,
+                    status: c.status,
+                    ports: c.ports,
+                    startedAt: c.startedAt,
+                    finishedAt: c.finishedAt,
+                    composeProject: c.composeProject.map { mapping[$0] ?? $0 },
+                    composeService: c.composeService
+                )
+            },
+            composeProjects: snapshot.composeProjects.map {
+                ComposeProject(name: mapping[$0.name] ?? $0.name, status: $0.status, configFiles: $0.configFiles)
+            }
         )
     }
 
