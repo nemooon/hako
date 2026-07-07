@@ -2,22 +2,18 @@ import Foundation
 
 /// GitHub Releases の最新バージョンを確認する
 enum UpdateChecker {
-    private static let latestReleaseAPI = URL(string: "https://api.github.com/repos/nemooon/hako/releases/latest")!
-    static let releasesPageURL = URL(string: "https://github.com/nemooon/hako/releases/latest")!
+    static let hakoReleasesPageURL = URL(string: "https://github.com/nemooon/hako/releases/latest")!
+    static let colimaReleasesPageURL = URL(string: "https://github.com/abiosoft/colima/releases/latest")!
 
-    /// 現在のバージョン(swift run の素の実行ファイルでは nil)
+    /// Hako 自身のバージョン(swift run の素の実行ファイルでは nil)
     static var currentVersion: String? {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
     }
 
-    /// 現在より新しいバージョンがあればそのバージョン文字列を completion に渡す(なければ nil)。
-    /// completion はバックグラウンドスレッドから呼ばれる
-    static func check(completion: @escaping (String?) -> Void) {
-        guard let current = currentVersion else {
-            completion(nil) // バージョン不明(swift run)のときは確認しない
-            return
-        }
-        var request = URLRequest(url: latestReleaseAPI)
+    /// repo("owner/name")の最新リリースが current より新しければ、そのバージョン文字列を
+    /// completion に渡す(なければ nil)。completion はバックグラウンドスレッドから呼ばれる
+    static func check(repo: String, current: String, completion: @escaping (String?) -> Void) {
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         URLSession.shared.dataTask(with: request) { data, _, _ in
             guard

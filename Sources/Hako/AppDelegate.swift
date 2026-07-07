@@ -20,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isFetchingDiskUsage = false
     // 新しいバージョンが見つかったらそのバージョン文字列(例: "0.2")
     private var availableUpdate: String?
+    // colima CLI のバージョンと、その新しいバージョン
+    private var colimaVersion: String?
+    private var availableColimaUpdate: String?
     private var updateCheckTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -123,13 +126,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// 新しいバージョンが公開されていたらメニューに知らせを出す
+    /// Hako と colima の新しいバージョンが公開されていたらメニューに知らせを出す
     private func checkForUpdates() {
-        UpdateChecker.check { [weak self] version in
+        if let current = UpdateChecker.currentVersion {
+            UpdateChecker.check(repo: "nemooon/hako", current: current) { [weak self] version in
+                DispatchQueue.main.async {
+                    guard let self, self.availableUpdate != version else { return }
+                    self.availableUpdate = version
+                    self.rebuildMenu()
+                }
+            }
+        }
+
+        // colima はまずローカルのバージョンを取ってから最新と比較する
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let current = ColimaService.colimaVersion()
             DispatchQueue.main.async {
-                guard let self, self.availableUpdate != version else { return }
-                self.availableUpdate = version
-                self.rebuildMenu()
+                guard let self else { return }
+                if self.colimaVersion != current {
+                    self.colimaVersion = current
+                    self.rebuildMenu()
+                }
+                guard let current else { return }
+                UpdateChecker.check(repo: "abiosoft/colima", current: current) { [weak self] version in
+                    DispatchQueue.main.async {
+                        guard let self, self.availableColimaUpdate != version else { return }
+                        self.availableColimaUpdate = version
+                        self.rebuildMenu()
+                    }
+                }
             }
         }
     }
@@ -333,11 +358,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         entries.append(.separator)
         if let version = availableUpdate {
             var update = MenuEntry.action(
-                "新しいバージョン \(version) があります",
-                #selector(openReleasesPage),
-                icon: "arrow.down.circle"
+                "Hako の新しいバージョン \(version) があります",
+                #selector(openReleasesPage(_:)),
+                icon: "arrow.down.circle",
+                represented: UpdateChecker.hakoReleasesPageURL
             )
             update.subtitle = "brew upgrade --cask hako で更新できます"
+            entries.append(update)
+        }
+        if let version = availableColimaUpdate {
+            var update = MenuEntry.action(
+                "Colima の新しいバージョン \(version) があります",
+                #selector(openReleasesPage(_:)),
+                icon: "arrow.down.circle",
+                represented: UpdateChecker.colimaReleasesPageURL
+            )
+            update.subtitle = "brew upgrade colima で更新できます"
             entries.append(update)
         }
         entries.append(settingsEntry())
@@ -429,7 +465,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 実行中は 2 行目に VM の割り当て(CPU/メモリ/ディスク)を出す
     private func colimaStatusEntry(_ snapshot: ColimaSnapshot) -> MenuEntry {
         let running = snapshot.running
-        var entry = MenuEntry.info(running ? "Colima: 実行中" : "Colima: 停止中", subtitle: snapshot.vmInfo)
+        // 例: "v0.9.1 ・ CPU 2 ・ メモリ 12GB ・ ディスク 100GB"(停止中は "v0.9.1" のみ)
+        var subtitleParts: [String] = []
+        if let colimaVersion {
+            subtitleParts.append("v\(colimaVersion)")
+        }
+        if let vmInfo = snapshot.vmInfo {
+            subtitleParts.append(vmInfo)
+        }
+        var entry = MenuEntry.info(
+            running ? "Colima: 実行中" : "Colima: 停止中",
+            subtitle: subtitleParts.isEmpty ? nil : subtitleParts.joined(separator: " ・ ")
+        )
         entry.isEnabled = true
         entry.children = [
             .action("起動", #selector(startColima), icon: "play.fill", enabled: !running),
@@ -829,8 +876,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - アップデート
 
-    @objc private func openReleasesPage() {
-        NSWorkspace.shared.open(UpdateChecker.releasesPageURL)
+    @objc private func openReleasesPage(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func openPort(_ sender: NSMenuItem) {

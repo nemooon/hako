@@ -164,6 +164,17 @@ enum ColimaService {
         )
     }
 
+    /// colima CLI 自体のバージョン(例: "0.9.1")。VM が停止していても取れる
+    static func colimaVersion() -> String? {
+        let result = Shell.run("colima version")
+        guard result.status == 0 else { return nil }
+        // 1 行目の "colima version 0.9.1" から取り出す(以降の行は git commit や runtime 情報)
+        for line in result.stdout.split(separator: "\n") where line.hasPrefix("colima version") {
+            return line.split(separator: " ").last.map(String.init)
+        }
+        return nil
+    }
+
     private static func colimaStatus() -> (running: Bool, vmInfo: String?) {
         // `colima ls --json` はプロファイルごとに 1 行の JSON を返す
         let result = Shell.run("colima ls --json")
