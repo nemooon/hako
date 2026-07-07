@@ -2,6 +2,8 @@
 
 macOS のメニューバーに常駐し、[Colima](https://github.com/abiosoft/colima) とコンテナの状態を表示・操作する小さなアプリ。
 
+![スクリーンショット](docs/screenshot.png)
+
 ## 機能
 
 ### ステータス表示
@@ -56,3 +58,11 @@ open dist   # "Hako.app" をアプリケーションフォルダへ
 
 - `docker compose down` したプロジェクトはコンテナが残っていないため一覧に出ません(`stop` なら出ます)
 - compose のポート情報は、停止中でも `docker inspect` の設定値から補完しています
+
+## ライセンス
+
+[MIT](LICENSE)
+
+## クレジット
+
+このアプリは [Claude Code](https://claude.com/claude-code)(Claude Fable 5)とのペアプログラミングで作られました。
