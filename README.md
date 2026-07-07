@@ -39,7 +39,20 @@ macOS のメニューバーに常駐し、[Colima](https://github.com/abiosoft/c
 - macOS 14.4+
 - `colima` / `docker`(Homebrew でインストールされていること)
 
-## 実行
+## インストール
+
+```sh
+brew install --cask nemooon/tap/hako
+```
+
+未署名アプリのため、初回起動時に Gatekeeper の警告が出る場合は
+右クリック →「開く」で起動するか、quarantine 属性を外してください:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Hako.app
+```
+
+## ソースから実行
 
 ```sh
 swift run
