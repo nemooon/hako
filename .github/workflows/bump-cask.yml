@@ -1,0 +1,55 @@
+name: Bump Homebrew cask
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "対象のリリースタグ (例: v0.1)"
+        required: true
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リリースアセットの sha256 を取得
+        id: info
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/Hako-${VERSION}.zip"
+          # release published 直後はアセットが見えないことがあるのでリトライ
+          for i in 1 2 3 4 5; do
+            curl -sL --fail -o hako.zip "$URL" && break
+            echo "アセット取得失敗 (${i}回目)、30秒待って再試行..."
+            sleep 30
+          done
+          test -s hako.zip
+          SHA=$(sha256sum hako.zip | cut -d' ' -f1)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: tap をチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: nemooon/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: cask を更新して push
+        run: |
+          cd tap
+          sed -i -E 's/^  version ".*"/  version "${{ steps.info.outputs.version }}"/' Casks/hako.rb
+          sed -i -E 's/^  sha256 ".*"/  sha256 "${{ steps.info.outputs.sha256 }}"/' Casks/hako.rb
+          if git diff --quiet; then
+            echo "cask は既に最新です。何もしません。"
+            exit 0
+          fi
+          git diff
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/hako.rb
+          git commit -m "hako ${{ steps.info.outputs.version }}"
+          git push
