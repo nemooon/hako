@@ -236,6 +236,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sync(menu, with: buildEntries())
     }
 
+    // MARK: - Editor selection
+
+    /// 「〜で開く」に使えるエディタの候補。インストール済みのものだけメニューに出す
+    private struct Editor {
+        let name: String
+        let bundleID: String
+    }
+
+    private static let editorCandidates: [Editor] = [
+        Editor(name: "Zed", bundleID: "dev.zed.Zed"),
+        Editor(name: "Visual Studio Code", bundleID: "com.microsoft.VSCode"),
+        Editor(name: "Cursor", bundleID: "com.todesktop.230313mzl4w4u92"),
+        Editor(name: "Windsurf", bundleID: "com.exafunction.windsurf"),
+        Editor(name: "IntelliJ IDEA", bundleID: "com.jetbrains.intellij"),
+        Editor(name: "IntelliJ IDEA CE", bundleID: "com.jetbrains.intellij.ce"),
+        Editor(name: "Sublime Text", bundleID: "com.sublimetext.4"),
+        Editor(name: "Nova", bundleID: "com.panic.Nova"),
+        Editor(name: "TextMate", bundleID: "com.macromates.TextMate"),
+    ]
+
+    private static let editorDefaultsKey = "editorBundleID"
+
+    private var installedEditors: [Editor] {
+        Self.editorCandidates.filter {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil
+        }
+    }
+
+    /// 選択中のエディタ。未選択(またはアンインストール済み)なら
+    /// 候補リストの先頭にあるインストール済みエディタへフォールバック
+    private var selectedEditor: Editor {
+        let installed = installedEditors
+        if let saved = UserDefaults.standard.string(forKey: Self.editorDefaultsKey),
+           let editor = installed.first(where: { $0.bundleID == saved }) {
+            return editor
+        }
+        return installed.first ?? Self.editorCandidates[0]
+    }
+
     private func buildEntries() -> [MenuEntry] {
         let quit = MenuEntry.action("Hako を終了", #selector(quitApp), key: "q")
 
@@ -252,9 +291,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             entries += containerEntries(snapshot)
         }
         entries.append(.separator)
-        entries.append(launchAtLoginEntry())
+        entries.append(settingsEntry())
         entries.append(quit)
         return entries
+    }
+
+    /// 「設定」サブメニュー(ログイン時に起動+エディタ選択)
+    private func settingsEntry() -> MenuEntry {
+        var entry = MenuEntry.info("設定")
+        entry.isEnabled = true
+
+        var children: [MenuEntry] = [launchAtLoginEntry(), .separator]
+        children.append(.info("プロジェクトを開くエディタ"))
+        let installed = installedEditors
+        if installed.isEmpty {
+            children.append(.info("対応エディタが見つかりません"))
+        } else {
+            let selected = selectedEditor
+            for editor in installed {
+                var item = MenuEntry.action(
+                    editor.name,
+                    #selector(selectEditor(_:)),
+                    represented: editor.bundleID
+                )
+                item.isChecked = editor.bundleID == selected.bundleID
+                children.append(item)
+            }
+        }
+        entry.children = children
+        return entry
+    }
+
+    @objc private func selectEditor(_ sender: NSMenuItem) {
+        guard let bundleID = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(bundleID, forKey: Self.editorDefaultsKey)
+        rebuildMenu()
     }
 
     /// 「ログイン時に起動」トグル。.app バンドルとして動いているときだけ有効
@@ -452,7 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let projectDir = project.configFiles.first
             .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
         children.append(.action(
-            "Zed で開く", #selector(openProjectInZed(_:)),
+            "\(selectedEditor.name) で開く", #selector(openProjectInEditor(_:)),
             icon: "curlybraces",
             enabled: projectDir != nil,
             represented: projectDir
@@ -673,11 +744,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openInTerminal("docker logs -f --tail 200 '\(name)'")
     }
 
-    @objc private func openProjectInZed(_ sender: NSMenuItem) {
+    @objc private func openProjectInEditor(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
-        Shell.runAsync("open -a Zed '\(path)'") { [weak self] result in
-            if result.status != 0 {
-                self?.showError(command: "open -a Zed", detail: result.stderr)
+        let editor = selectedEditor
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleID) else {
+            showError(command: "\(editor.name) で開く", detail: "\(editor.name) が見つかりませんでした。「設定 > プロジェクトを開くエディタ」で選び直してください。")
+            return
+        }
+        NSWorkspace.shared.open(
+            [URL(fileURLWithPath: path, isDirectory: true)],
+            withApplicationAt: appURL,
+            configuration: NSWorkspace.OpenConfiguration()
+        ) { [weak self] _, error in
+            if let error {
+                DispatchQueue.main.async {
+                    self?.showError(command: "\(editor.name) で開く", detail: error.localizedDescription)
+                }
             }
         }
     }
