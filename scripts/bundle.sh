@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Hako"
 BUNDLE_ID="com.nemooon.hako"
+VERSION="0.1"
 DIST="dist/${APP_NAME}.app"
 
 swift build -c release
@@ -32,7 +33,9 @@ cat > "$DIST/Contents/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${VERSION}</string>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.4</string>
     <key>LSUIElement</key>
