@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // ディスク使用量(取得が遅いのでメニューを開いたときだけ更新)
     private var diskUsage: [DiskUsage] = []
     private var isFetchingDiskUsage = false
+    // 新しいバージョンが見つかったらそのバージョン文字列(例: "0.2")
+    private var availableUpdate: String?
+    private var updateCheckTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -31,6 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             self?.refresh()
+        }
+
+        checkForUpdates()
+        updateCheckTimer = Timer.scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { [weak self] _ in
+            self?.checkForUpdates()
         }
 
         // スリープ復帰時は即リフレッシュ(次のポーリングを待たない)
@@ -110,6 +118,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.isFetchingDiskUsage = false
                 guard self.diskUsage != usage else { return }
                 self.diskUsage = usage
+                self.rebuildMenu()
+            }
+        }
+    }
+
+    /// 新しいバージョンが公開されていたらメニューに知らせを出す
+    private func checkForUpdates() {
+        UpdateChecker.check { [weak self] version in
+            DispatchQueue.main.async {
+                guard let self, self.availableUpdate != version else { return }
+                self.availableUpdate = version
                 self.rebuildMenu()
             }
         }
@@ -312,6 +331,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             entries += containerEntries(snapshot)
         }
         entries.append(.separator)
+        if let version = availableUpdate {
+            var update = MenuEntry.action(
+                "新しいバージョン \(version) があります",
+                #selector(openReleasesPage),
+                icon: "arrow.down.circle"
+            )
+            update.subtitle = "brew upgrade --cask hako で更新できます"
+            entries.append(update)
+        }
         entries.append(settingsEntry())
         entries.append(quit)
         return entries
@@ -797,6 +825,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ) else { return }
         diskUsage = []
         runBusy(message: "未使用ボリュームを削除中…", command: "docker volume prune -f")
+    }
+
+    // MARK: - アップデート
+
+    @objc private func openReleasesPage() {
+        NSWorkspace.shared.open(UpdateChecker.releasesPageURL)
     }
 
     @objc private func openPort(_ sender: NSMenuItem) {
