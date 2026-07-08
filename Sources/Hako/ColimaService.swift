@@ -128,7 +128,19 @@ enum ColimaService {
 
     private static let demoNames = ["acme-shop", "blog-stack", "chat-api", "photo-share", "recipe-box", "todo-app"]
 
-    /// compose プロジェクト名(とそれを含むコンテナ名)を架空の名前に置き換える
+    /// スクリーンショットに出しても差し支えない、ありふれたサービス名。
+    /// これ以外のサービス名は固有の情報(顧客名など)を含みうるので置き換える
+    private static let genericServiceNames: Set<String> = [
+        "app", "api", "web", "www", "worker", "batch", "cron", "proxy",
+        "db", "database", "mysql", "mariadb", "postgres", "postgresql", "mongo", "mongodb",
+        "redis", "memcached", "cache", "queue", "rabbitmq", "kafka",
+        "nginx", "apache", "httpd", "php", "php-fpm", "wordpress",
+        "mail", "mailhog", "mailpit", "smtp", "phpmyadmin", "adminer",
+        "elasticsearch", "opensearch", "kibana", "minio", "localstack", "storage",
+    ]
+
+    /// compose のプロジェクト名・サービス名と、それらを含むコンテナ名・イメージ名を
+    /// 架空のものに置き換える(サービス名はありふれたものだけ残す)
     private static func anonymize(_ snapshot: ColimaSnapshot) -> ColimaSnapshot {
         let realNames = snapshot.composeProjects.map(\.name) + snapshot.containers.compactMap(\.composeProject)
         var mapping: [String: String] = [:]
@@ -137,8 +149,17 @@ enum ColimaService {
             mapping[name] = demoNames[index % demoNames.count] + suffix
         }
 
+        // ありふれた名前でないサービスは service-1, service-2… に置き換える
+        let realServices = Set(snapshot.containers.compactMap(\.composeService))
+            .filter { !genericServiceNames.contains($0.lowercased()) }
+        for (index, name) in realServices.sorted().enumerated() {
+            mapping[name] = "service-\(index + 1)"
+        }
+
+        // 「kidsnet-wordpress_gakken」のような複合名でも確実に消えるよう、長い名前から順に置換する
+        let orderedMapping = mapping.sorted { $0.key.count > $1.key.count }
         func replace(_ text: String) -> String {
-            mapping.reduce(text) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
+            orderedMapping.reduce(text) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
         }
 
         return ColimaSnapshot(
@@ -148,14 +169,14 @@ enum ColimaService {
                 Container(
                     id: c.id,
                     name: replace(c.name),
-                    image: c.image,
+                    image: replace(c.image),
                     state: c.state,
                     status: c.status,
                     ports: c.ports,
                     startedAt: c.startedAt,
                     finishedAt: c.finishedAt,
                     composeProject: c.composeProject.map { mapping[$0] ?? $0 },
-                    composeService: c.composeService
+                    composeService: c.composeService.map { mapping[$0] ?? $0 }
                 )
             },
             composeProjects: snapshot.composeProjects.map {
