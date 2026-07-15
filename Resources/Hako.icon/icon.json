@@ -1,0 +1,36 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "extended-srgb:0.98000,0.72000,0.36000,1.00000",
+      "extended-srgb:0.85000,0.48000,0.16000,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : "automatic",
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "shippingbox.png",
+          "name" : "shippingbox"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.6
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.2
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
