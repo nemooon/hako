@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Hako"
 BUNDLE_ID="com.nemooon.hako"
-VERSION="0.2"
+VERSION="0.3"
 DIST="dist/${APP_NAME}.app"
 
 swift build -c release
