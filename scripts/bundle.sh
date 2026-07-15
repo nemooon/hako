@@ -14,8 +14,8 @@ swift build -c release
 rm -rf "$DIST"
 mkdir -p "$DIST/Contents/MacOS" "$DIST/Contents/Resources"
 
-cp .build/release/Hako "$DIST/Contents/MacOS/Hako"
-cp Resources/Hako.icns "$DIST/Contents/Resources/Hako.icns"
+cp ".build/release/${APP_NAME}" "$DIST/Contents/MacOS/${APP_NAME}"
+cp "Resources/${APP_NAME}.icns" "$DIST/Contents/Resources/${APP_NAME}.icns"
 
 cat > "$DIST/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -23,9 +23,9 @@ cat > "$DIST/Contents/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>Hako</string>
+    <string>${APP_NAME}</string>
     <key>CFBundleIconFile</key>
-    <string>Hako</string>
+    <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleName</key>
