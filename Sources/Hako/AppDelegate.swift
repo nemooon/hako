@@ -282,7 +282,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             destructive: Bool = false,
             enabled: Bool = true,
             represented: Any? = nil,
-            key: String = ""
+            key: String = "",
+            modifiers: NSEvent.ModifierFlags = []
         ) -> MenuEntry {
             MenuEntry(
                 title: title,
@@ -291,7 +292,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 isEnabled: enabled,
                 action: action,
                 keyEquivalent: key,
-                representedObject: represented
+                representedObject: represented,
+                modifiers: modifiers
             )
         }
     }
@@ -340,7 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func buildEntries() -> [MenuEntry] {
-        let quit = MenuEntry.action("Hako を終了", #selector(quitApp), key: "q")
+        let quit = MenuEntry.action("Hako を終了", #selector(quitApp), key: "q", modifiers: .command)
 
         if let busyMessage {
             return [.info(busyMessage), .separator, quit]
