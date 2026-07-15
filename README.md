@@ -46,14 +46,13 @@ macOS のメニューバーに常駐し、[Colima](https://github.com/abiosoft/c
 
 ```sh
 brew install --cask nemooon/tap/hako
-```
-
-未署名アプリのため、初回起動時に Gatekeeper の警告が出る場合は
-右クリック →「開く」で起動するか、quarantine 属性を外してください:
-
-```sh
 xattr -dr com.apple.quarantine /Applications/Hako.app
 ```
+
+Apple Developer ID 署名なしのため、macOS が quarantine 属性を付けて起動を
+ブロックします。上の `xattr` で属性を外してから起動してください。
+または、一度起動を試したあと「システム設定 → プライバシーとセキュリティ」の
+セキュリティ欄で「このまま開く」を選びます。
 
 ## ソースから実行
 
