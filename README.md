@@ -70,6 +70,18 @@ open dist   # "Hako.app" をアプリケーションフォルダへ
 
 ログイン時の自動起動は、メニュー下部の「設定 > ログイン時に起動」から設定できます。
 
+## リリース
+
+1. `scripts/bundle.sh` の `VERSION` を上げてコミット・push
+2. `./scripts/release.sh <リリースノートのファイル>` — ビルド → zip → GitHub リリースを作成
+   (ファイルを省略すると `gh` がエディタを開きます)
+3. リリース公開をトリガーに `.github/workflows/bump-cask.yml` が動き、
+   [nemooon/homebrew-tap](https://github.com/nemooon/homebrew-tap) の
+   `Casks/hako.rb` の version と sha256 を自動更新します
+
+ワークフローには tap へ push できる PAT を `TAP_GITHUB_TOKEN` として
+リポジトリシークレットに登録しておく必要があります。
+
 ## 補足
 
 - `docker compose down` したプロジェクトはコンテナが残っていないため一覧に出ません(`stop` なら出ます)
