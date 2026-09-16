@@ -715,6 +715,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             item.image = entry.dot.flatMap { statusDot($0) }
         }
+        if #available(macOS 27.0, *) {
+            // macOS 27 は SF Symbols を標準で隠すため、状態を伝える ● は常に表示する。
+            // 項目の使い回し時には通常の画像表示ルールへ戻す。
+            item.preferredImageVisibility = entry.dot != nil && entry.icon == nil ? .visible : .automatic
+        }
         if entry.isDestructive {
             item.attributedTitle = NSAttributedString(string: entry.title, attributes: [
                 .foregroundColor: NSColor.systemRed,
