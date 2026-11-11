@@ -6,10 +6,12 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Hako"
 BUNDLE_ID="com.nemooon.hako"
-VERSION="0.4"
+VERSION="0.5"
 DIST="dist/${APP_NAME}.app"
 
-swift build -c release
+# SwiftBuild がリンク時の SDK を deployment target として記録する環境を回避する。
+# Liquid Glass の自動適用には、実際に使用した SDK の記録が必要。
+swift build --build-system native -c release
 
 rm -rf "$DIST"
 mkdir -p "$DIST/Contents/MacOS" "$DIST/Contents/Resources"

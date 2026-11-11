@@ -10,6 +10,7 @@ let package = Package(
         .executableTarget(
             name: "Hako",
             path: "Sources/Hako"
-        )
+        ),
+        .testTarget(name: "HakoTests", dependencies: ["Hako"])
     ]
 )

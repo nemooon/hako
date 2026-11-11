@@ -85,6 +85,23 @@ struct ColimaSnapshot: Equatable {
 struct ContainerStats: Equatable {
     let cpu: String  // 例: "0.05%"
     let mem: String  // 例: "5.8MiB"
+
+    var cpuPercent: Double? {
+        Double(cpu.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces))
+    }
+
+    var memoryBytes: Double? {
+        let value = mem.trimmingCharacters(in: .whitespaces)
+        let number = value.prefix { $0.isNumber || $0 == "." }
+        guard let amount = Double(number) else { return nil }
+        let unit = value.dropFirst(number.count).trimmingCharacters(in: .whitespaces)
+        let units: [String: Double] = [
+            "B": 1, "kB": 1e3, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12,
+            "KiB": 1024, "MiB": 1_048_576, "GiB": 1_073_741_824, "TiB": 1_099_511_627_776
+        ]
+        guard let multiplier = units[unit] else { return nil }
+        return amount * multiplier
+    }
 }
 
 struct DiskUsage: Equatable {

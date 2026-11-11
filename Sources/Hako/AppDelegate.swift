@@ -1,9 +1,15 @@
 import AppKit
 import ServiceManagement
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
+    private let windowModel = MainWindowModel()
+    private var mainWindow: MainWindowController?
+    private var windowRefreshTimer: Timer?
+    private var isFetchingSnapshot = false
+    private var stateRevision = 0
 
     // 直近の取得結果(メニューを開いた瞬間はこれで描画し、裏で更新する)
     private var snapshot: ColimaSnapshot?
@@ -18,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // ディスク使用量(取得が遅いのでメニューを開いたときだけ更新)
     private var diskUsage: [DiskUsage] = []
     private var isFetchingDiskUsage = false
+    private var cleanupWindow: CleanupWindowController?
     // 新しいバージョンが見つかったらそのバージョン文字列(例: "0.2")
     private var availableUpdate: String?
     // colima CLI のバージョンと、その新しいバージョン
@@ -31,17 +38,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
         statusItem.menu = menu
 
+        configureApplicationMenu()
         updateIcon()
         rebuildMenu()
         refresh()
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            self?.refresh()
+            MainActor.assumeIsolated { self?.refresh() }
         }
 
         checkForUpdates()
         updateCheckTimer = Timer.scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { [weak self] _ in
-            self?.checkForUpdates()
+            MainActor.assumeIsolated { self?.checkForUpdates() }
         }
 
         // スリープ復帰時は即リフレッシュ(次のポーリングを待たない)
@@ -51,6 +59,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openMainWindow()
+        return false
     }
 
     @objc private func didWake() {
@@ -65,8 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fetchDiskUsage()
         // 開いている間は短い間隔でリアルタイム更新(差分適用なので開いたままでも安全)
         let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
-            self?.refresh()
-            self?.fetchStats()
+            MainActor.assumeIsolated {
+                self?.refresh()
+                self?.fetchStats()
+            }
         }
         RunLoop.main.add(timer, forMode: .common) // メニュー追跡中も発火させる
         openRefreshTimer = timer
@@ -80,15 +95,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - State
 
     private func refresh() {
-        guard busyMessage == nil else { return } // colima 操作中はポーリングしない
+        guard busyMessage == nil, !isFetchingSnapshot else { return }
+        isFetchingSnapshot = true
+        let revision = stateRevision
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let snapshot = ColimaService.fetchSnapshot()
             DispatchQueue.main.async {
-                guard let self, self.snapshot != snapshot else { return }
+                guard let self else { return }
+                self.isFetchingSnapshot = false
+                // 操作前に開始した取得結果で、操作後の状態を上書きしない。
+                guard revision == self.stateRevision else {
+                    self.refresh()
+                    return
+                }
+                guard self.snapshot != snapshot else { return }
                 if let old = self.snapshot {
                     self.notifyStateChanges(from: old, to: snapshot)
                 }
                 self.snapshot = snapshot
+                if !snapshot.running {
+                    self.statsByID = [:]
+                    self.diskUsage = []
+                } else if self.mainWindow?.window?.isVisible == true {
+                    self.fetchStats()
+                    if self.diskUsage.isEmpty { self.fetchDiskUsage() }
+                }
                 self.updateIcon()
                 self.rebuildMenu()
             }
@@ -96,13 +127,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func fetchStats() {
-        guard snapshot?.running == true, !isFetchingStats else { return }
+        guard busyMessage == nil, snapshot?.running == true, !isFetchingStats else { return }
         isFetchingStats = true
+        let revision = stateRevision
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let stats = ColimaService.fetchStats()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isFetchingStats = false
+                guard self.snapshot?.running == true, revision == self.stateRevision else { return }
                 guard self.statsByID != stats else { return }
                 self.statsByID = stats
                 self.rebuildMenu()
@@ -112,13 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// ディスク使用量はほとんど変わらないので、メニューを開いたときだけ取得する
     private func fetchDiskUsage() {
-        guard snapshot?.running == true, !isFetchingDiskUsage else { return }
+        guard busyMessage == nil, snapshot?.running == true, !isFetchingDiskUsage else { return }
         isFetchingDiskUsage = true
+        let revision = stateRevision
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let usage = ColimaService.fetchDiskUsage()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isFetchingDiskUsage = false
+                guard self.snapshot?.running == true, revision == self.stateRevision else { return }
                 guard self.diskUsage != usage else { return }
                 self.diskUsage = usage
                 self.rebuildMenu()
@@ -299,6 +334,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func rebuildMenu() {
+        windowModel.snapshot = snapshot
+        windowModel.busyMessage = busyMessage
+        windowModel.statsByID = statsByID
+        windowModel.diskUsage = diskUsage
+        windowModel.colimaVersion = colimaVersion
         sync(menu, with: buildEntries())
     }
 
@@ -342,16 +382,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func buildEntries() -> [MenuEntry] {
+        let open = MenuEntry.action("Hako を開く…", #selector(openMainWindow), icon: "macwindow", key: "0", modifiers: .command)
         let quit = MenuEntry.action("Hako を終了", #selector(quitApp), key: "q", modifiers: .command)
 
         if let busyMessage {
-            return [.info(busyMessage), .separator, quit]
+            return [open, .separator, .info(busyMessage), .separator, quit]
         }
         guard let snapshot else {
-            return [.info("状態を確認中…"), .separator, quit]
+            return [open, .separator, .info("状態を確認中…"), .separator, quit]
         }
 
-        var entries = [colimaStatusEntry(snapshot)]
+        var entries = [open, .separator, colimaStatusEntry(snapshot)]
         if snapshot.running {
             entries.append(diskUsageEntry())
             entries.append(.separator)
@@ -397,8 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         children.append(.separator)
-        children.append(.action("未使用イメージを削除", #selector(pruneImages), icon: "trash", destructive: true))
-        children.append(.action("ビルドキャッシュを削除", #selector(pruneBuildCache), icon: "trash", destructive: true))
+        children.append(.action("未使用リソースを整理…", #selector(openCleanup), icon: "externaldrive"))
         children.append(.action("未使用の匿名ボリュームを削除", #selector(pruneVolumes), icon: "trash", destructive: true))
         entry.children = children
         return entry
@@ -770,6 +810,192 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .withSymbolConfiguration(config)
     }
 
+    // MARK: - Main window
+
+    private func configureApplicationMenu() {
+        let main = NSMenu()
+        let appMenu = NSMenu(title: "Hako")
+        appMenu.addItem(withTitle: "Hako について", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hako を隠す", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hako を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appItem = NSMenuItem()
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let edit = NSMenu(title: "編集")
+        for (title, action, key) in [
+            ("取り消す", Selector(("undo:")), "z"),
+            ("カット", #selector(NSText.cut(_:)), "x"),
+            ("コピー", #selector(NSText.copy(_:)), "c"),
+            ("ペースト", #selector(NSText.paste(_:)), "v"),
+            ("すべて選択", #selector(NSText.selectAll(_:)), "a"),
+        ] { edit.addItem(withTitle: title, action: action, keyEquivalent: key) }
+        let redo = NSMenuItem(title: "やり直す", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.insertItem(redo, at: 1)
+        edit.insertItem(.separator(), at: 2)
+        edit.addItem(.separator())
+        let find = edit.addItem(withTitle: "コンテナを検索…", action: #selector(focusContainerSearch), keyEquivalent: "f")
+        find.target = self
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        let view = NSMenu(title: "表示")
+        let all = view.addItem(withTitle: "すべてのコンテナ", action: #selector(showAllContainers), keyEquivalent: "1")
+        all.target = self
+        let standalone = view.addItem(withTitle: "単体のコンテナ", action: #selector(showStandaloneContainers), keyEquivalent: "2")
+        standalone.target = self
+        view.addItem(.separator())
+        let refresh = view.addItem(withTitle: "状態を更新", action: #selector(refreshWindowContents), keyEquivalent: "r")
+        refresh.target = self
+        let sidebar = view.addItem(withTitle: "サイドバーを表示／非表示", action: #selector(toggleWindowSidebar), keyEquivalent: "s")
+        sidebar.keyEquivalentModifierMask = [.command, .option]
+        sidebar.target = self
+        let inspector = view.addItem(withTitle: "インスペクタを表示／非表示", action: #selector(toggleWindowInspector), keyEquivalent: "i")
+        inspector.keyEquivalentModifierMask = [.command, .option]
+        inspector.target = self
+        let viewItem = NSMenuItem()
+        viewItem.submenu = view
+        main.addItem(viewItem)
+
+        let project = NSMenu(title: "操作")
+        for (title, action, key) in [
+            ("起動", #selector(startWindowSelection), String(UnicodeScalar(NSUpArrowFunctionKey)!)),
+            ("停止", #selector(stopWindowSelection), String(UnicodeScalar(NSDownArrowFunctionKey)!)),
+            ("再起動", #selector(restartWindowSelection), "r")
+        ] {
+            let item = project.addItem(withTitle: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = [.control, .command]
+            item.target = self
+        }
+        let projectItem = NSMenuItem()
+        projectItem.submenu = project
+        main.addItem(projectItem)
+
+        let windows = NSMenu(title: "ウインドウ")
+        let open = windows.addItem(withTitle: "Hako を開く", action: #selector(openMainWindow), keyEquivalent: "0")
+        open.target = self
+        windows.addItem(withTitle: "閉じる", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windows.addItem(withTitle: "しまう", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windows.addItem(withTitle: "拡大／縮小", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        let windowItem = NSMenuItem()
+        windowItem.submenu = windows
+        main.addItem(windowItem)
+        NSApp.mainMenu = main
+        NSApp.windowsMenu = windows
+    }
+
+    @objc private func refreshWindowContents() { performWindowAction(.refresh) }
+
+    @objc private func toggleWindowInspector() { mainWindow?.toggleInspector() }
+
+    @objc private func toggleWindowSidebar() { mainWindow?.toggleSidebar() }
+    @objc private func showAllContainers() { mainWindow?.selectScope(.all) }
+    @objc private func showStandaloneContainers() { mainWindow?.selectScope(.standalone) }
+    @objc private func startWindowSelection() { mainWindow?.performLifecycleOperation(.start) }
+    @objc private func stopWindowSelection() { mainWindow?.performLifecycleOperation(.stop) }
+    @objc private func restartWindowSelection() { mainWindow?.performLifecycleOperation(.restart) }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(startWindowSelection):
+            menuItem.title = "\(mainWindow?.operationTargetLabel ?? "選択項目")を起動"
+            return mainWindow?.window?.isKeyWindow == true && mainWindow?.canPerformLifecycleOperation(.start) == true
+        case #selector(stopWindowSelection):
+            menuItem.title = "\(mainWindow?.operationTargetLabel ?? "選択項目")を停止"
+            return mainWindow?.window?.isKeyWindow == true && mainWindow?.canPerformLifecycleOperation(.stop) == true
+        case #selector(restartWindowSelection):
+            menuItem.title = "\(mainWindow?.operationTargetLabel ?? "選択項目")を再起動"
+            return mainWindow?.window?.isKeyWindow == true && mainWindow?.canPerformLifecycleOperation(.restart) == true
+        case #selector(toggleWindowSidebar), #selector(showAllContainers), #selector(showStandaloneContainers), #selector(toggleWindowInspector):
+            return mainWindow?.window?.isKeyWindow == true && mainWindow?.canNavigate == true
+        default:
+            return true
+        }
+    }
+
+    @objc private func focusContainerSearch() {
+        openMainWindow()
+        mainWindow?.focusSearch()
+    }
+
+    @objc private func openMainWindow() {
+        if mainWindow == nil {
+            mainWindow = MainWindowController(model: windowModel, perform: { [weak self] action in
+                self?.performWindowAction(action)
+            }, onClose: { [weak self] in
+                self?.windowRefreshTimer?.invalidate()
+                self?.windowRefreshTimer = nil
+                // 閉じても終了せず、元のメニューバー常駐へ戻る。
+                NSApp.setActivationPolicy(.accessory)
+            })
+        }
+        NSApp.setActivationPolicy(.regular)
+        mainWindow?.open()
+        refresh()
+        fetchStats()
+        fetchDiskUsage()
+        guard windowRefreshTimer == nil else { return }
+        let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.mainWindow?.window?.isVisible == true,
+                      self.mainWindow?.window?.isMiniaturized == false else { return }
+                self.refresh()
+                self.fetchStats()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        windowRefreshTimer = timer
+    }
+
+    private func performWindowAction(_ action: MainWindowAction) {
+        // 既存メニューのアクションを通し、確認・エラー処理も共有する。
+        let selector: Selector
+        var represented: Any?
+        switch action {
+        case .refresh:
+            refresh()
+            fetchStats()
+            fetchDiskUsage()
+            return
+        case .cleanup: selector = #selector(openCleanup)
+        case .startColima: selector = #selector(startColima)
+        case .restartColima: selector = #selector(restartColima)
+        case .stopColima: selector = #selector(stopColima)
+        case .container(let id, let operation):
+            guard let container = snapshot?.containers.first(where: { $0.id == id }) else { return }
+            represented = container.name
+            switch operation {
+            case .start: selector = #selector(startContainer(_:))
+            case .restart: selector = #selector(restartContainer(_:))
+            case .stop: selector = #selector(stopContainer(_:))
+            case .remove: selector = #selector(removeContainer(_:))
+            case .logs: selector = #selector(showLogs(_:))
+            case .shell: selector = #selector(openShell(_:))
+            }
+        case .project(let name, let operation):
+            guard let project = snapshot?.composeProjects.first(where: { $0.name == name }) else { return }
+            represented = project
+            switch operation {
+            case .start: selector = #selector(upCompose(_:))
+            case .restart: selector = #selector(restartCompose(_:))
+            case .stop: selector = #selector(stopCompose(_:))
+            case .remove: selector = #selector(downCompose(_:))
+            case .editor:
+                guard let file = project.configFiles.first else { return }
+                represented = URL(fileURLWithPath: file).deletingLastPathComponent().path
+                selector = #selector(openProjectInEditor(_:))
+            }
+        }
+        guard busyMessage == nil else { return }
+        let sender = NSMenuItem()
+        sender.representedObject = represented
+        NSApp.sendAction(selector, to: self, from: sender)
+    }
+
     // MARK: - Actions
 
     @objc private func startColima() {
@@ -851,30 +1077,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - お掃除(prune)
 
-    @objc private func pruneImages() {
-        guard confirm(
-            title: "未使用イメージを削除しますか?",
-            message: "docker image prune -a を実行します。どのコンテナにも使われていないイメージがすべて削除されます(必要になれば再ダウンロードされます)。",
-            button: "削除"
-        ) else { return }
-        diskUsage = [] // 古い数字を出さないよう、次にメニューを開いたとき取り直す
-        runBusy(message: "未使用イメージを削除中…", command: "docker image prune -a -f")
-    }
-
-    @objc private func pruneBuildCache() {
-        guard confirm(
-            title: "ビルドキャッシュを削除しますか?",
-            message: "docker builder prune を実行します。次回の docker build は遅くなりますが、動作には影響しません。",
-            button: "削除"
-        ) else { return }
-        diskUsage = []
-        runBusy(message: "ビルドキャッシュを削除中…", command: "docker builder prune -f")
+    @objc private func openCleanup() {
+        if cleanupWindow == nil {
+            cleanupWindow = CleanupWindowController { [weak self] in
+                self?.diskUsage = []
+                self?.fetchDiskUsage()
+                self?.refresh()
+            }
+        }
+        cleanupWindow?.open()
     }
 
     @objc private func pruneVolumes() {
         guard confirm(
             title: "未使用の匿名ボリュームを削除しますか?",
-            message: "docker volume prune を実行します。どのコンテナにも使われていない匿名ボリュームが削除されます(名前付きボリュームは残ります)。",
+            message: "docker volume prune を実行します。どのコンテナにも使われていない匿名ボリュームが削除されます。DBなどのデータも失われ、元に戻せません(名前付きボリュームは残ります)。",
             button: "削除"
         ) else { return }
         diskUsage = []
@@ -957,6 +1174,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func runBusy(message: String, command: String) {
+        guard busyMessage == nil else { return }
+        stateRevision += 1
         busyMessage = message
         updateIcon()
         rebuildMenu()
@@ -964,6 +1183,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Shell.runAsync(command) { [weak self] result in
             guard let self else { return }
             self.busyMessage = nil
+            self.updateIcon()
+            self.rebuildMenu()
             self.suppressNotificationsOnce = true // 自分の操作による変化は通知しない
             if result.status != 0 {
                 self.showError(command: command, detail: result.stderr)
