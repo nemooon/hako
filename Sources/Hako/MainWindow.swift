@@ -576,9 +576,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.contentViewController = split
         window.toolbar = toolbarController.toolbar
         window.minSize = NSSize(width: 880, height: 560)
-        window.center()
-        window.setFrameAutosaveName("HakoMainWindow")
-        window.setFrameUsingName("HakoMainWindow")
         super.init(window: window)
         window.delegate = self
         inspectorObservation = inspector.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
@@ -589,6 +586,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         observeToolbar()
+        // HostingController / SplitView の取り付けで fittingSize に縮むため、
+        // ペインとツールバーの初期状態を反映した後にサイズを決める。
+        window.setContentSize(NSSize(width: 1100, height: 700))
+        window.center()
+        window.setFrameUsingName("HakoMainWindow")
+        window.setFrameAutosaveName("HakoMainWindow")
+        enforceMinimumWindowSize()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -652,9 +656,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func open() {
         if window?.isMiniaturized == true { window?.deminiaturize(nil) }
+        enforceMinimumWindowSize()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func enforceMinimumWindowSize() {
+        guard let window else { return }
+        var frame = window.frame
+        let size = NSSize(width: max(frame.width, window.minSize.width),
+                          height: max(frame.height, window.minSize.height))
+        guard size != frame.size else { return }
+        // 保存された高さを補正するときも、ウィンドウの上端は維持する。
+        frame.origin.y -= size.height - frame.height
+        frame.size = size
+        window.setFrame(frame, display: false)
     }
 
     private func observeToolbar() {
