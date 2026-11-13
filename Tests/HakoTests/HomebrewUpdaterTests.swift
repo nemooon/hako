@@ -31,6 +31,7 @@ final class HomebrewUpdaterTests: XCTestCase {
         var upgraded = false
         fake.respond = { command in
             if command.first == "/usr/bin/xattr" { return xattr }
+            if command.last == "update" { return FakeCommandRunner.ok() }
             if command.contains("upgrade") { upgraded = true; return upgrade }
             if command.contains("list") {
                 let version = upgraded ? after : before
@@ -46,6 +47,7 @@ final class HomebrewUpdaterTests: XCTestCase {
         try await HomebrewUpdater(brew: brew, run: fake.runner).upgrade(.hako, to: "0.7", appPath: app)
         XCTAssertEqual(fake.calls, [
             [brew, "list", "--cask", "--versions", "hako"],
+            [brew, "update"],
             [brew, "upgrade", "--cask", "--no-quit", "--no-ask", "nemooon/tap/hako"],
             [brew, "list", "--cask", "--versions", "hako"],
             ["/usr/bin/xattr", "-dr", "com.apple.quarantine", app],
@@ -116,6 +118,31 @@ final class HomebrewUpdaterTests: XCTestCase {
         fake.respond = { _ in FakeCommandRunner.ok("colima 0.10.2 0.10.3\n") }
         let version = await HomebrewUpdater(brew: brew, run: fake.runner).installedVersion(.colima)
         XCTAssertEqual(version, "0.10.3")
+    }
+
+    /// brew list の並びは数値順とは限らない(バイト順)ので、最大のバージョンを選ぶ
+    func testInstalledVersionPicksNumericallyLatest() async {
+        let fake = FakeCommandRunner()
+        fake.respond = { _ in FakeCommandRunner.ok("colima 0.10.3 0.9.1\n") }
+        let version = await HomebrewUpdater(brew: brew, run: fake.runner).installedVersion(.colima)
+        XCTAssertEqual(version, "0.10.3")
+    }
+
+    /// homebrew-core の revision 付き(0.11.0_1)は 0.11.0 として扱う
+    func testRevisionSuffixCountsAsExpectedVersion() async throws {
+        let fake = fakeBrew(package: "colima", before: "0.10.3", after: "0.11.0_1")
+        try await HomebrewUpdater(brew: brew, run: fake.runner).upgrade(.colima, to: "0.11.0", appPath: app)
+    }
+
+    /// upgrade の前に一覧を取り直す(自動更新は 24 時間に 1 回のため、再試行が効かなくなる)
+    func testRefreshesHomebrewBeforeUpgrade() async throws {
+        let fake = fakeBrew(package: "colima", before: "0.10.3", after: "0.11.0")
+        try await HomebrewUpdater(brew: brew, run: fake.runner).upgrade(.colima, to: "0.11.0", appPath: app)
+        let update = fake.calls.firstIndex(of: [brew, "update"])
+        let upgrade = fake.calls.firstIndex(of: [brew, "upgrade", "--no-ask", "colima"])
+        XCTAssertNotNil(update)
+        XCTAssertLessThan(update ?? .max, upgrade ?? .min)
+        XCTAssertEqual(HomebrewUpdater.commands(for: .colima, appPath: app), ["brew update", "brew upgrade --no-ask colima"])
     }
 
     func testLocateBrewPrefersAppleSilicon() {

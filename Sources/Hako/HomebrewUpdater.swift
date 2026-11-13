@@ -51,9 +51,9 @@ struct HomebrewUpdater {
     static func commands(for package: UpdatePackage, appPath: String) -> [String] {
         switch package {
         case .hako:
-            return [Shell.display(["brew"] + upgradeArguments(.hako)), quarantineCommand(appPath)]
+            return ["brew update", Shell.display(["brew"] + upgradeArguments(.hako)), quarantineCommand(appPath)]
         case .colima:
-            return [Shell.display(["brew"] + upgradeArguments(.colima))]
+            return ["brew update", Shell.display(["brew"] + upgradeArguments(.colima))]
         }
     }
 
@@ -76,25 +76,29 @@ struct HomebrewUpdater {
     }
 
     /// Homebrew が入れているバージョン。Homebrew 管理でなければ nil
-    /// ("colima 0.10.2 0.10.3" のように複数並ぶときは最後が最新)
+    /// 複数並ぶときの順番は数値順とは限らないので最大のものを選び、revision("_1")は落とす
     func installedVersion(_ package: UpdatePackage) async -> String? {
         let result = await run(brew, Self.listArguments(package))
-        guard result.status == 0,
-              let line = result.stdout.split(separator: "\n").first,
-              let version = line.split(separator: " ").dropFirst().last
-        else { return nil }
-        return String(version)
+        guard result.status == 0, let line = result.stdout.split(separator: "\n").first else { return nil }
+        return line.split(separator: " ").dropFirst()
+            .map { String($0.split(separator: "_").first ?? $0) }
+            .max { UpdateChecker.isNewer($1, than: $0) }
     }
 
     /// 更新して、期待するバージョンが入ったことを確かめる。Hako は続けて隔離属性を外す
     func upgrade(_ package: UpdatePackage, to expected: String, appPath: String?) async throws {
         guard await installedVersion(package) != nil else { throw UpdateError.notInstalledByHomebrew }
 
-        let result = await run(brew, Self.upgradeArguments(package))
-        guard result.status == 0 else {
-            throw UpdateError.upgradeFailed(Self.output(of: result))
+        // brew upgrade の自動更新は 24 時間に 1 回なので、先に一覧を取り直す(しないと再試行が効かない)
+        for arguments in [["update"], Self.upgradeArguments(package)] {
+            let result = await run(brew, arguments)
+            guard result.status == 0 else {
+                throw UpdateError.upgradeFailed(Self.output(of: result))
+            }
         }
-        guard await installedVersion(package) == expected else {
+        guard let installed = await installedVersion(package),
+              !UpdateChecker.isNewer(expected, than: installed)
+        else {
             throw UpdateError.versionNotYetAvailable(expected)
         }
 

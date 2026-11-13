@@ -84,6 +84,15 @@ final class UpdateModelTests: XCTestCase {
         XCTAssertEqual(model.colima.phase, .unavailable("新しいバージョンを確認できませんでした"))
     }
 
+    /// インストール済みで再起動待ち(「あとで」を選んだ後に開き直した)なら、更新ありではなく完了として出す
+    func testInstalledButNotRestartedShowsInstalled() async {
+        let store = StatusStore()
+        let model = UpdateModel(backend: backend(fakeBrew(hako: "0.7")), store: store)
+        await model.refresh()
+        XCTAssertEqual(model.hako.phase, .installed)
+        XCTAssertNil(store.availableUpdate)
+    }
+
     func testColimaUpdateSucceedsAndUpdatesCurrent() async {
         let store = StatusStore()
         let model = UpdateModel(backend: backend(fakeBrew()), store: store)

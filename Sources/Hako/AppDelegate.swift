@@ -46,6 +46,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
     }
 
+    /// アップデート中は終了させない(⌘Q やメニューバーの終了、Hako の再起動ボタンを含む)
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard updateWindow?.allowsTermination == false else { return .terminateNow }
+        updateWindow?.open(refresh: false)
+        NSSound.beep()
+        return .terminateCancel
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         openMainWindow()
         return false

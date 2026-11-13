@@ -92,8 +92,9 @@ private struct UpdateSection: View {
             ProgressView().controlSize(.small)
         case .installed:
             if let restart {
-                Button("あとで", action: close)
-                Button(restartTitle, action: restart).buttonStyle(.borderedProminent)
+                // もう一方の欄が更新中なら、閉じたり終了したりしない
+                Button("あとで", action: close).disabled(model.isUpdating)
+                Button(restartTitle, action: restart).buttonStyle(.borderedProminent).disabled(model.isUpdating)
             }
         default:
             EmptyView()
@@ -175,10 +176,11 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
             restartHako: { AppRelauncher.relaunch(appPath: appPath) },
             restartColima: { [weak self] in
                 restartColima()
-                self?.close()
+                self?.window?.performClose(nil)
             },
             colimaRunning: colimaRunning,
-            close: { [weak self] in self?.close() }
+            // close() は windowShouldClose を通らないので performClose で閉じる
+            close: { [weak self] in self?.window?.performClose(nil) }
         ))
         hosting.sizingOptions = []
         window.contentViewController = hosting
@@ -193,12 +195,15 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// 表示して、そのたびに最新リリースを確認し直す
-    func open() {
+    /// 表示して、そのたびに最新リリースを確認し直す(更新中に前面へ出すだけのときは refresh: false)
+    func open(refresh: Bool = true) {
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
-        Task { await model.refresh() }
+        if refresh { Task { await model.refresh() } }
     }
+
+    /// 更新中は終了させない(brew が途中で止まって中途半端な状態になるため)
+    var allowsTermination: Bool { !model.isUpdating }
 
     /// 更新の途中で閉じて中途半端な状態にしない
     func windowShouldClose(_ sender: NSWindow) -> Bool { !model.isUpdating }

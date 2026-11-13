@@ -76,7 +76,7 @@ final class UpdateModel {
         hako = await check(.hako, current: backend.hakoVersion, release: hakoRelease,
                            notRunnable: backend.hakoAppPath == nil ? ".app として動いていないため、アップデートできません" : nil)
         if hakoRelease != nil {
-            store.recordHakoUpdate(newer(hako))
+            store.recordHakoUpdate(hako.phase == .installed ? nil : newer(hako))
         }
 
         let current = await colimaCurrent
@@ -104,10 +104,13 @@ final class UpdateModel {
             item.phase = .unavailable(notRunnable)
         } else if newer(item) == nil {
             item.phase = .upToDate
-        } else if let updater = backend.updater {
-            item.phase = await updater.installedVersion(package) == nil
-                ? .unavailable(UpdateError.notInstalledByHomebrew.message)
-                : .available
+        } else if let updater = backend.updater, let latest = item.latest {
+            // 新しい版がもう入っていて再起動待ちなら、更新ありではなく完了として出す
+            switch await updater.installedVersion(package) {
+            case nil: item.phase = .unavailable(UpdateError.notInstalledByHomebrew.message)
+            case let installed? where !UpdateChecker.isNewer(latest, than: installed): item.phase = .installed
+            default: item.phase = .available
+            }
         } else {
             item.phase = .unavailable("Homebrew が見つかりません")
         }
