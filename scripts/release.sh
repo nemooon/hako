@@ -16,6 +16,18 @@ VERSION=$(grep -E '^VERSION=' scripts/bundle.sh | cut -d'"' -f2)
 ZIP="dist/${APP_NAME}-${VERSION}.zip"
 NOTES_FILE="${1:-}"
 
+# 配布するバイナリとタグのソースを一致させるため、未コミットの変更や未 push のコミットがあれば止める
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+    echo "エラー: コミットしていない変更があります。コミットしてから実行してください。" >&2
+    exit 1
+fi
+git fetch --quiet
+if [[ "$(git rev-parse HEAD)" != "$(git rev-parse '@{upstream}')" ]]; then
+    echo "エラー: HEAD がリモートと一致していません。push してから実行してください。" >&2
+    exit 1
+fi
+COMMIT=$(git rev-parse HEAD)
+
 if gh release view "v${VERSION}" >/dev/null 2>&1; then
     echo "エラー: リリース v${VERSION} は既に存在します。scripts/bundle.sh の VERSION を上げてください。" >&2
     exit 1
@@ -33,9 +45,9 @@ rm -f "$ZIP"
 ditto -c -k --keepParent "dist/${APP_NAME}.app" "$ZIP"
 
 if [[ -n "$NOTES_FILE" ]]; then
-    gh release create "v${VERSION}" "$ZIP" --title "${APP_NAME} ${VERSION}" --notes-file "$NOTES_FILE"
+    gh release create "v${VERSION}" "$ZIP" --target "$COMMIT" --title "${APP_NAME} ${VERSION}" --notes-file "$NOTES_FILE"
 else
-    gh release create "v${VERSION}" "$ZIP" --title "${APP_NAME} ${VERSION}"
+    gh release create "v${VERSION}" "$ZIP" --target "$COMMIT" --title "${APP_NAME} ${VERSION}"
 fi
 
 echo "リリースしました: v${VERSION}"

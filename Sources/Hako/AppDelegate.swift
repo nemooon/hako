@@ -120,9 +120,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
                 if !snapshot.running {
                     self.statsByID = [:]
                     self.diskUsage = []
-                } else if self.mainWindow?.window?.isVisible == true {
-                    self.fetchStats()
-                    if self.diskUsage.isEmpty { self.fetchDiskUsage() }
+                } else if self.mainWindow?.window?.isVisible == true, self.diskUsage.isEmpty {
+                    // stats はウィンドウの 3 秒タイマーが取るので、ここでは重ねて取らない
+                    self.fetchDiskUsage()
                 }
                 self.updateIcon()
                 self.rebuildMenu()
@@ -570,7 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         var entries = projects.map { composeEntry(project: $0, group: composeGroups[$0.name] ?? []) }
 
         // 起動中 → 名前順で並べる
-        let sortedStandalone = standalone.sorted { ($0.isRunning ? 0 : 1, $0.name) < ($1.isRunning ? 0 : 1, $1.name) }
+        let sortedStandalone = standalone.sorted(by: Container.runningFirst)
         entries += sortedStandalone.map(standaloneEntry(for:))
         return entries
     }
@@ -626,20 +626,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
 
         children.append(.action(
-            "ターミナルで接続", #selector(openShell(_:)),
+            "ターミナルで接続", #selector(runContainerCommand(_:)),
             icon: "terminal",
             enabled: container.isRunning,
-            represented: container.name
+            represented: ContainerCommand(name: container.name, operation: .shell)
         ))
-        children.append(.action("ログを見る", #selector(showLogs(_:)), icon: "text.alignleft", represented: container.name))
+        children.append(.action("ログを見る", #selector(runContainerCommand(_:)), icon: "text.alignleft",
+                                represented: ContainerCommand(name: container.name, operation: .logs)))
         children.append(.action("名前をコピー", #selector(copyText(_:)), icon: "doc.on.doc", represented: container.name))
         children.append(.separator)
 
-        children.append(.action("起動", #selector(startContainer(_:)), icon: "play.fill", enabled: !container.isRunning, represented: container.name))
-        children.append(.action("再起動", #selector(restartContainer(_:)), icon: "arrow.clockwise", enabled: container.isRunning, represented: container.name))
-        children.append(.action("停止", #selector(stopContainer(_:)), icon: "stop.fill", enabled: container.isRunning, represented: container.name))
+        func command(_ operation: MainWindowAction.ContainerOperation) -> ContainerCommand {
+            ContainerCommand(name: container.name, operation: operation)
+        }
+        let run = #selector(runContainerCommand(_:))
+        children.append(.action("起動", run, icon: "play.fill", enabled: !container.isRunning, represented: command(.start)))
+        children.append(.action("再起動", run, icon: "arrow.clockwise", enabled: container.isRunning, represented: command(.restart)))
+        children.append(.action("停止", run, icon: "stop.fill", enabled: container.isRunning, represented: command(.stop)))
         children.append(.separator)
-        children.append(.action("破棄", #selector(removeContainer(_:)), icon: "trash", destructive: true, represented: container.name))
+        children.append(.action("破棄", run, icon: "trash", destructive: true, represented: command(.remove)))
         return children
     }
 
@@ -672,7 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
         // 起動中 → 名前順で並べる
         var children: [MenuEntry] = []
-        let sorted = group.sorted { ($0.isRunning ? 0 : 1, $0.name) < ($1.isRunning ? 0 : 1, $1.name) }
+        let sorted = group.sorted(by: Container.runningFirst)
         for container in sorted {
             // 1 行目: サービス名 / 2 行目: 稼働状況 ・ イメージ ・ ポート
             // (長さの安定している時刻を先頭に置いて、行の頭を揃える)
@@ -691,27 +696,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         children.append(.separator)
 
-        // compose ファイルの場所からプロジェクトディレクトリを割り出す
-        let projectDir = project.configFiles.first
-            .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+        func command(_ operation: MainWindowAction.ProjectOperation) -> ProjectCommand {
+            ProjectCommand(project: project, operation: operation)
+        }
+        let run = #selector(runProjectCommand(_:))
         children.append(.action(
-            "\(selectedEditor.name) で開く", #selector(openProjectInEditor(_:)),
+            "\(selectedEditor.name) で開く", run,
             icon: "curlybraces",
-            enabled: projectDir != nil,
-            represented: projectDir
+            enabled: project.directory != nil,
+            represented: command(.editor)
         ))
         children.append(.separator)
 
         children.append(.action(
-            "起動", #selector(upCompose(_:)),
+            "起動", run,
             icon: "play.fill",
             enabled: runningCount < group.count || group.isEmpty,
-            represented: project
+            represented: command(.start)
         ))
-        children.append(.action("再起動", #selector(restartCompose(_:)), icon: "arrow.clockwise", enabled: runningCount > 0, represented: project))
-        children.append(.action("停止", #selector(stopCompose(_:)), icon: "stop.fill", enabled: runningCount > 0, represented: project))
+        children.append(.action("再起動", run, icon: "arrow.clockwise", enabled: runningCount > 0, represented: command(.restart)))
+        children.append(.action("停止", run, icon: "stop.fill", enabled: runningCount > 0, represented: command(.stop)))
         children.append(.separator)
-        children.append(.action("破棄", #selector(downCompose(_:)), icon: "trash", destructive: true, represented: project))
+        children.append(.action("破棄", run, icon: "trash", destructive: true, represented: command(.remove)))
 
         entry.children = children
         return entry
@@ -966,72 +972,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     }
 
     private func performWindowAction(_ action: MainWindowAction) {
-        // 既存メニューのアクションを通し、確認・エラー処理も共有する。
-        let selector: Selector
-        var represented: Any?
-        switch action {
-        case .refresh:
+        // メニューと同じ処理を呼び、確認・エラー処理も共有する。
+        if case .refresh = action {
             refresh()
             fetchStats()
             fetchDiskUsage()
             return
-        case .cleanup: selector = #selector(openCleanup)
-        case .startColima: selector = #selector(startColima)
-        case .restartColima: selector = #selector(restartColima)
-        case .stopColima: selector = #selector(stopColima)
-        case .container(let id, let operation):
-            guard let container = snapshot?.containers.first(where: { $0.id == id }) else { return }
-            represented = container.name
-            switch operation {
-            case .start: selector = #selector(startContainer(_:))
-            case .restart: selector = #selector(restartContainer(_:))
-            case .stop: selector = #selector(stopContainer(_:))
-            case .remove: selector = #selector(removeContainer(_:))
-            case .logs: selector = #selector(showLogs(_:))
-            case .shell: selector = #selector(openShell(_:))
-            }
-        case .project(let name, let operation):
-            guard let project = snapshot?.composeProjects.first(where: { $0.name == name }) else { return }
-            represented = project
-            switch operation {
-            case .start: selector = #selector(upCompose(_:))
-            case .restart: selector = #selector(restartCompose(_:))
-            case .stop: selector = #selector(stopCompose(_:))
-            case .remove: selector = #selector(downCompose(_:))
-            case .editor:
-                guard let file = project.configFiles.first else { return }
-                represented = URL(fileURLWithPath: file).deletingLastPathComponent().path
-                selector = #selector(openProjectInEditor(_:))
-            }
         }
         guard busyMessage == nil else { return }
-        let sender = NSMenuItem()
-        sender.representedObject = represented
-        NSApp.sendAction(selector, to: self, from: sender)
+        switch action {
+        case .refresh: break
+        case .cleanup: openCleanup()
+        case .startColima: startColima()
+        case .restartColima: restartColima()
+        case .stopColima: stopColima()
+        case .container(let id, let operation):
+            guard let container = snapshot?.containers.first(where: { $0.id == id }) else { return }
+            runContainerOperation(operation, name: container.name)
+        case .project(let name, let operation):
+            guard let project = snapshot?.composeProjects.first(where: { $0.name == name }) else { return }
+            runProjectOperation(operation, project: project)
+        }
     }
 
     // MARK: - Actions
 
+    /// メニュー項目に載せるコンテナ操作
+    private struct ContainerCommand {
+        let name: String
+        let operation: MainWindowAction.ContainerOperation
+    }
+
+    /// メニュー項目に載せる compose プロジェクト操作
+    private struct ProjectCommand {
+        let project: ComposeProject
+        let operation: MainWindowAction.ProjectOperation
+    }
+
+    /// 操作対象の colima プロファイル(docker の現在の context に対応)
+    private var colimaProfile: String { snapshot?.profile ?? "default" }
+
     @objc private func startColima() {
-        runBusy(message: "Colima を起動中…", command: "colima start")
+        runBusy(message: "Colima を起動中…", arguments: ["colima", "start", "--profile", colimaProfile])
     }
 
     @objc private func restartColima() {
-        runBusy(message: "Colima を再起動中…", command: "colima restart")
+        runBusy(message: "Colima を再起動中…", arguments: ["colima", "restart", "--profile", colimaProfile])
     }
 
     @objc private func stopColima() {
-        runBusy(message: "Colima を停止中…", command: "colima stop")
-    }
-
-    @objc private func stopCompose(_ sender: NSMenuItem) {
-        guard let project = sender.representedObject as? ComposeProject else { return }
-        runBusy(message: "\(project.name) を停止中…", command: "docker compose -p '\(project.name)' stop")
-    }
-
-    @objc private func restartCompose(_ sender: NSMenuItem) {
-        guard let project = sender.representedObject as? ComposeProject else { return }
-        runBusy(message: "\(project.name) を再起動中…", command: "docker compose -p '\(project.name)' restart")
+        runBusy(message: "Colima を停止中…", arguments: ["colima", "stop", "--profile", colimaProfile])
     }
 
     /// 破棄系アクションの確認ダイアログ。OK なら true
@@ -1046,47 +1036,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    @objc private func downCompose(_ sender: NSMenuItem) {
-        guard let project = sender.representedObject as? ComposeProject else { return }
-        // コンテナごと削除されて一覧からも消えるので、確認を挟む
-        guard confirm(
-            title: "\(project.name) を破棄しますか?",
-            message: "docker compose down を実行します。コンテナとネットワークが削除され、このプロジェクトは一覧から消えます(ボリュームは残ります)。",
-            button: "破棄"
-        ) else { return }
-
-        runBusy(message: "\(project.name) を破棄中…", command: "docker compose -p '\(project.name)' down")
+    @objc private func runContainerCommand(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? ContainerCommand else { return }
+        runContainerOperation(command.operation, name: command.name)
     }
 
-    @objc private func upCompose(_ sender: NSMenuItem) {
-        guard let project = sender.representedObject as? ComposeProject else { return }
-        runBusy(message: "\(project.name) を起動中…", command: project.upCommand)
+    @objc private func runProjectCommand(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? ProjectCommand else { return }
+        runProjectOperation(command.operation, project: command.project)
     }
 
-    @objc private func startContainer(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        runBusy(message: "\(name) を起動中…", command: "docker start '\(name)'")
+    private func runContainerOperation(_ operation: MainWindowAction.ContainerOperation, name: String) {
+        switch operation {
+        case .start:
+            runBusy(message: "\(name) を起動中…", arguments: ["docker", "start", name])
+        case .restart:
+            runBusy(message: "\(name) を再起動中…", arguments: ["docker", "restart", name])
+        case .stop:
+            runBusy(message: "\(name) を停止中…", arguments: ["docker", "stop", name])
+        case .remove:
+            guard confirm(
+                title: "\(name) を破棄しますか?",
+                message: "docker rm -f を実行します。コンテナが削除され、一覧から消えます(ボリュームは残ります)。",
+                button: "破棄"
+            ) else { return }
+            runBusy(message: "\(name) を破棄中…", arguments: ["docker", "rm", "-f", name])
+        case .logs:
+            openInTerminal("docker logs -f --tail 200 \(Shell.quote(name))")
+        case .shell:
+            // bash があれば bash、なければ sh
+            openInTerminal("docker exec -it \(Shell.quote(name)) /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'")
+        }
     }
 
-    @objc private func restartContainer(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        runBusy(message: "\(name) を再起動中…", command: "docker restart '\(name)'")
-    }
-
-    @objc private func stopContainer(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        runBusy(message: "\(name) を停止中…", command: "docker stop '\(name)'")
-    }
-
-    @objc private func removeContainer(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        guard confirm(
-            title: "\(name) を破棄しますか?",
-            message: "docker rm -f を実行します。コンテナが削除され、一覧から消えます(ボリュームは残ります)。",
-            button: "破棄"
-        ) else { return }
-
-        runBusy(message: "\(name) を破棄中…", command: "docker rm -f '\(name)'")
+    private func runProjectOperation(_ operation: MainWindowAction.ProjectOperation, project: ComposeProject) {
+        let name = project.name
+        switch operation {
+        case .start:
+            runBusy(message: "\(name) を起動中…", arguments: project.upArguments)
+        case .restart:
+            runBusy(message: "\(name) を再起動中…", arguments: ["docker", "compose", "-p", name, "restart"])
+        case .stop:
+            runBusy(message: "\(name) を停止中…", arguments: ["docker", "compose", "-p", name, "stop"])
+        case .remove:
+            // コンテナごと削除されて一覧からも消えるので、確認を挟む
+            guard confirm(
+                title: "\(name) を破棄しますか?",
+                message: "docker compose down を実行します。コンテナとネットワークが削除され、このプロジェクトは一覧から消えます(ボリュームは残ります)。",
+                button: "破棄"
+            ) else { return }
+            runBusy(message: "\(name) を破棄中…", arguments: ["docker", "compose", "-p", name, "down"])
+        case .editor:
+            guard let directory = project.directory else { return }
+            openInEditor(path: directory)
+        }
     }
 
     // MARK: - お掃除(prune)
@@ -1109,7 +1112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             button: "削除"
         ) else { return }
         diskUsage = []
-        runBusy(message: "未使用ボリュームを削除中…", command: "docker volume prune -f")
+        runBusy(message: "未使用ボリュームを削除中…", arguments: ["docker", "volume", "prune", "-f"])
     }
 
     // MARK: - アップデート
@@ -1131,19 +1134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    @objc private func openShell(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        // bash があれば bash、なければ sh
-        openInTerminal("docker exec -it '\(name)' /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'")
-    }
-
-    @objc private func showLogs(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        openInTerminal("docker logs -f --tail 200 '\(name)'")
-    }
-
-    @objc private func openProjectInEditor(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String else { return }
+    private func openInEditor(path: String) {
         let editor = selectedEditor
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleID) else {
             showError(command: "\(editor.name) で開く", detail: "\(editor.name) が見つかりませんでした。「設定 > プロジェクトを開くエディタ」で選び直してください。")
@@ -1187,21 +1178,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         NSApp.terminate(nil)
     }
 
-    private func runBusy(message: String, command: String) {
+    private func runBusy(message: String, arguments: [String]) {
         guard busyMessage == nil else { return }
         stateRevision += 1
         busyMessage = message
         updateIcon()
         rebuildMenu()
 
-        Shell.runAsync(command) { [weak self] result in
+        Shell.execAsync(arguments) { [weak self] result in
             guard let self else { return }
             self.busyMessage = nil
             self.updateIcon()
             self.rebuildMenu()
             self.suppressNotificationsOnce = true // 自分の操作による変化は通知しない
             if result.status != 0 {
-                self.showError(command: command, detail: result.stderr)
+                self.showError(command: Shell.display(arguments), detail: result.stderr)
             }
             self.refresh()
         }

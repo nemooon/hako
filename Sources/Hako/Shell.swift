@@ -7,10 +7,27 @@ enum Shell {
         let stderr: String
     }
 
-    /// Homebrew のパスを含めたうえでコマンドを同期実行する(呼び出し側でバックグラウンドキューに載せること)
+    /// シェル構文(パイプやリダイレクト)が必要なコマンドを zsh 経由で同期実行する
     @discardableResult
     static func run(_ command: String) -> Result {
         runProgram("/bin/zsh", ["-c", command])
+    }
+
+    /// docker / colima などを Homebrew のパスから探して、シェルを介さず同期実行する。
+    /// 引数はそのまま渡るのでクォートは不要(呼び出し側でバックグラウンドキューに載せること)
+    @discardableResult
+    static func exec(_ arguments: [String]) -> Result {
+        runProgram("/usr/bin/env", arguments)
+    }
+
+    /// シェルに渡す文字列を単一引用符で安全に囲む(Terminal で実行するコマンド向け)
+    static func quote(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+    }
+
+    /// 表示用にコマンドを 1 行の文字列にする
+    static func display(_ arguments: [String]) -> String {
+        arguments.map { $0.contains(where: { " '\"$".contains($0) }) ? quote($0) : $0 }.joined(separator: " ")
     }
 
     /// シェルを介さず実行する(AppleScript などクォートが厄介なもの向け)
@@ -58,9 +75,9 @@ enum Shell {
     }
 
     /// バックグラウンドで実行し、完了時にメインスレッドでコールバックする
-    static func runAsync(_ command: String, completion: @escaping (Result) -> Void) {
+    static func execAsync(_ arguments: [String], completion: @escaping (Result) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = run(command)
+            let result = exec(arguments)
             DispatchQueue.main.async {
                 completion(result)
             }

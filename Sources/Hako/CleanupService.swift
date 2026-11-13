@@ -26,7 +26,7 @@ struct CleanupResult {
 enum CleanupService {
     typealias Runner = ([String]) -> Shell.Result
     static func docker(_ arguments: [String]) -> Shell.Result {
-        Shell.runProgram("/usr/bin/env", ["docker"] + arguments)
+        Shell.exec(["docker"] + arguments)
     }
 
     private static func output(_ args: [String], run: Runner) throws -> String {
@@ -60,7 +60,9 @@ enum CleanupService {
             }
             used = Set(inspected.compactMap { $0["Image"] as? String })
         }
-        let ids = Set(try output(prefix + ["image", "ls", "-aq", "--no-trunc"], run: run).split(separator: "\n").map(String.init))
+        // -a を付けると、使用中イメージの親(中間イメージ)まで「タグなし・未使用」として並び、
+        // 削除しても子への依存で必ず失敗するので、最上位のイメージだけを対象にする
+        let ids = Set(try output(prefix + ["image", "ls", "-q", "--no-trunc"], run: run).split(separator: "\n").map(String.init))
         var resources: [CleanupResource] = []
         if !ids.isEmpty {
             let images = try objects(output(prefix + ["image", "inspect"] + ids.sorted(), run: run))
@@ -114,30 +116,34 @@ enum CleanupService {
             }, warning: warning)
     }
 
+    private static let sizePattern = try! NSRegularExpression(
+        pattern: #"^([0-9]+(?:\.[0-9]+)?)\s*([kmgtp]?i?b)\*?$"#, options: .caseInsensitive)
+
     /// Buildx の JSON はバイト数と表示用文字列の両方が存在する。
     static func parseCacheSize(_ value: Any?) -> Int64? {
         guard let value else { return nil }
         let text = String(describing: value).trimmingCharacters(in: .whitespacesAndNewlines)
         if let bytes = Int64(text) { return bytes >= 0 ? bytes : nil }
-        let pattern = #"^([0-9]+(?:\.[0-9]+)?)\s*([kmgtp]?i?b)\*?$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+        guard let match = sizePattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let numberRange = Range(match.range(at: 1), in: text),
               let unitRange = Range(match.range(at: 2), in: text),
               let number = Double(text[numberRange]) else { return nil }
-        let units: [String: Double] = ["b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12, "pb": 1e15,
-            "kib": 1024, "mib": 1048576, "gib": 1073741824, "tib": 1099511627776, "pib": 1125899906842624]
-        guard let multiplier = units[text[unitRange].lowercased()] else { return nil }
+        guard let multiplier = ByteUnit.multiplier(text[unitRange]) else { return nil }
         let bytes = (number * multiplier).rounded()
         guard bytes.isFinite, bytes >= 0, bytes < Double(Int64.max) else { return nil }
         return Int64(bytes)
     }
 
-    private static func parseDate(_ text: String?) -> Date? {
-        guard let text else { return nil }
+    private static let fractionalDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+        return formatter
+    }()
+    private static let dateFormatter = ISO8601DateFormatter()
+
+    private static func parseDate(_ text: String?) -> Date? {
+        guard let text else { return nil }
+        return fractionalDateFormatter.date(from: text) ?? dateFormatter.date(from: text)
     }
 
     static func delete(_ resources: [CleanupResource], scan: CleanupScan, run: Runner = docker) -> [CleanupResult] {

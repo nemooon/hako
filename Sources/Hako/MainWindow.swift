@@ -42,7 +42,7 @@ enum ContainerScope: Hashable {
             return included && (search.isEmpty ||
                 [container.name, container.image, container.composeService ?? "", container.composeProject ?? ""]
                     .contains { $0.localizedStandardContains(search) })
-        }.sorted { ($0.isRunning ? 0 : 1, $0.name) < ($1.isRunning ? 0 : 1, $1.name) }
+        }.sorted(by: Container.runningFirst)
     }
 }
 

@@ -19,7 +19,12 @@ jobs:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           VERSION="${TAG#v}"
-          URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/Hako-${VERSION}.zip"
+          # sed の置換や URL に埋め込むので、数字とドットだけのバージョンに限る
+          if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "不正なタグです: ${TAG}" >&2
+            exit 1
+          fi
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/Hako-${VERSION}.zip"
           # release published 直後はアセットが見えないことがあるのでリトライ
           for i in 1 2 3 4 5; do
             curl -sL --fail -o hako.zip "$URL" && break
@@ -39,10 +44,14 @@ jobs:
           path: tap
 
       - name: cask を更新して push
+        # ${{ }} を run に直接埋め込むとタグ文字列がそのままシェルとして解釈されるので、env 経由で渡す
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+          SHA256: ${{ steps.info.outputs.sha256 }}
         run: |
           cd tap
-          sed -i -E 's/^  version ".*"/  version "${{ steps.info.outputs.version }}"/' Casks/hako.rb
-          sed -i -E 's/^  sha256 ".*"/  sha256 "${{ steps.info.outputs.sha256 }}"/' Casks/hako.rb
+          sed -i -E "s/^  version \".*\"/  version \"${VERSION}\"/" Casks/hako.rb
+          sed -i -E "s/^  sha256 \".*\"/  sha256 \"${SHA256}\"/" Casks/hako.rb
           if git diff --quiet; then
             echo "cask は既に最新です。何もしません。"
             exit 0
@@ -51,5 +60,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Casks/hako.rb
-          git commit -m "hako ${{ steps.info.outputs.version }}"
+          git commit -m "hako ${VERSION}"
           git push

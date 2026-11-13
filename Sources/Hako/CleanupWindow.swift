@@ -256,8 +256,11 @@ final class CleanupWindowController: NSWindowController, NSWindowDelegate {
         window.toolbar = titlebar
         window.setContentSize(NSSize(width: 960, height: 640))
         window.minSize = NSSize(width: 780, height: 540)
-        window.setFrameAutosaveName("HakoCleanupWindow")
+        // 初回は中央に置き、保存済みの位置とサイズがあればそれで上書きする
+        // (center を後に呼ぶと、復元した位置が毎回中央に戻ってしまう)
         window.center()
+        window.setFrameUsingName("HakoCleanupWindow")
+        window.setFrameAutosaveName("HakoCleanupWindow")
         window.delegate = self
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

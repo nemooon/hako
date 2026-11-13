@@ -30,11 +30,16 @@ struct Container: Equatable {
         image.split(separator: "/").last.map(String.init) ?? image
     }
 
-    /// 「4分前に起動」「昨日に停止」のような表示用テキスト
-    var friendlyStatus: String {
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.dateTimeStyle = .named
+        return formatter
+    }()
+
+    /// 「4分前に起動」「昨日に停止」のような表示用テキスト
+    var friendlyStatus: String {
+        let formatter = Self.relativeFormatter
         if isRunning, let startedAt {
             var text = "\(formatter.localizedString(for: startedAt, relativeTo: Date()))に起動"
             if isUnhealthy {
@@ -46,6 +51,11 @@ struct Container: Equatable {
             return "\(formatter.localizedString(for: finishedAt, relativeTo: Date()))に停止"
         }
         return status // 時刻が取れなかったときは docker の表記のまま
+    }
+
+    /// 一覧の並び順: 起動中を先に、その中は名前順
+    static func runningFirst(_ lhs: Container, _ rhs: Container) -> Bool {
+        (lhs.isRunning ? 0 : 1, lhs.name) < (rhs.isRunning ? 0 : 1, rhs.name)
     }
 
     /// status は毎分変わる文字列なので比較から外す(メニューの無駄な再構築を防ぐ)。
@@ -72,14 +82,19 @@ struct ComposeProject: Equatable {
     var hasRunning: Bool { status.lowercased().contains("running") }
     var hasExited: Bool { status.lowercased().contains("exited") }
 
-    /// config ファイルを指定して up -d するコマンド(相対パスの volume も compose 側で解決される)
-    var upCommand: String {
-        let files = configFiles.map { "-f '\($0)'" }.joined(separator: " ")
-        return "docker compose -p '\(name)' \(files) up -d"
+    /// config ファイルを指定して up -d する引数(相対パスの volume も compose 側で解決される)
+    var upArguments: [String] {
+        ["docker", "compose", "-p", name] + configFiles.flatMap { ["-f", $0] } + ["up", "-d"]
+    }
+
+    /// compose ファイルの置き場所(エディタで開くディレクトリ)
+    var directory: String? {
+        configFiles.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
     }
 }
 
 struct ColimaSnapshot: Equatable {
+    let profile: String      // 操作対象の colima プロファイル(docker の現在の context に対応)
     let running: Bool
     let vmInfo: String?      // 例: "CPU 2 ・ メモリ 12GB ・ ディスク 100GB"
     let containers: [Container]
@@ -99,12 +114,21 @@ struct ContainerStats: Equatable {
         let number = value.prefix { $0.isNumber || $0 == "." }
         guard let amount = Double(number) else { return nil }
         let unit = value.dropFirst(number.count).trimmingCharacters(in: .whitespaces)
-        let units: [String: Double] = [
-            "B": 1, "kB": 1e3, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12,
-            "KiB": 1024, "MiB": 1_048_576, "GiB": 1_073_741_824, "TiB": 1_099_511_627_776
-        ]
-        guard let multiplier = units[unit] else { return nil }
+        guard let multiplier = ByteUnit.multiplier(unit) else { return nil }
         return amount * multiplier
+    }
+}
+
+/// docker / buildx が出す容量の単位(大文字小文字は区別しない)
+enum ByteUnit {
+    private static let multipliers: [String: Double] = [
+        "b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12, "pb": 1e15,
+        "kib": 1024, "mib": 1_048_576, "gib": 1_073_741_824,
+        "tib": 1_099_511_627_776, "pib": 1_125_899_906_842_624,
+    ]
+
+    static func multiplier(_ unit: some StringProtocol) -> Double? {
+        multipliers[unit.lowercased()]
     }
 }
 
@@ -128,9 +152,10 @@ struct DiskUsage: Equatable {
 enum ColimaService {
     /// Colima の状態と起動中コンテナをまとめて取得する(バックグラウンドキューで呼ぶこと)
     static func fetchSnapshot() -> ColimaSnapshot {
-        let status = colimaStatus()
+        let profile = currentProfile()
+        let status = colimaStatus(profile: profile)
         guard status.running else {
-            return ColimaSnapshot(running: false, vmInfo: nil, containers: [], composeProjects: [])
+            return ColimaSnapshot(profile: profile, running: false, vmInfo: nil, containers: [], composeProjects: [])
         }
         // コンテナ一覧(ps → inspect)と compose 一覧は互いに依存しないので同時に取る
         var containers: [Container] = []
@@ -142,6 +167,7 @@ enum ColimaService {
         containers = listContainers()
         group.wait()
         let snapshot = ColimaSnapshot(
+            profile: profile,
             running: true,
             vmInfo: status.vmInfo,
             containers: containers,
@@ -193,6 +219,7 @@ enum ColimaService {
         }
 
         return ColimaSnapshot(
+            profile: snapshot.profile,
             running: snapshot.running,
             vmInfo: snapshot.vmInfo,
             containers: snapshot.containers.map { c in
@@ -217,7 +244,7 @@ enum ColimaService {
 
     /// colima CLI 自体のバージョン(例: "0.9.1")。VM が停止していても取れる
     static func colimaVersion() -> String? {
-        let result = Shell.run("colima version")
+        let result = Shell.exec(["colima", "version"])
         guard result.status == 0 else { return nil }
         // 1 行目の "colima version 0.9.1" から取り出す(以降の行は git commit や runtime 情報)
         for line in result.stdout.split(separator: "\n") where line.hasPrefix("colima version") {
@@ -226,46 +253,54 @@ enum ColimaService {
         return nil
     }
 
-    private static func colimaStatus() -> (running: Bool, vmInfo: String?) {
-        // `colima ls --json` はプロファイルごとに 1 行の JSON を返す
-        let result = Shell.run("colima ls --json")
-        guard result.status == 0 else { return (false, nil) }
+    /// docker の現在の context に対応する colima プロファイル名。
+    /// "colima" → "default"、"colima-work" → "work"。colima 以外の context なら "default"
+    private static func currentProfile() -> String {
+        let result = Shell.exec(["docker", "context", "show"])
+        let context = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.status == 0, context.hasPrefix("colima") else { return "default" }
+        return context == "colima" ? "default" : String(context.dropFirst("colima-".count))
+    }
 
-        for line in result.stdout.split(separator: "\n") {
-            guard
-                let data = line.data(using: .utf8),
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let status = json["status"] as? String
-            else { continue }
-            if status.lowercased() == "running" {
-                var parts: [String] = []
-                if let cpus = (json["cpus"] as? NSNumber)?.intValue {
-                    parts.append("CPU \(cpus)")
-                }
-                if let memory = (json["memory"] as? NSNumber)?.int64Value, memory > 0 {
-                    parts.append("メモリ \(memory / (1 << 30))GB")
-                }
-                if let disk = (json["disk"] as? NSNumber)?.int64Value, disk > 0 {
-                    parts.append("ディスク \(disk / (1 << 30))GB")
-                }
-                return (true, parts.isEmpty ? nil : parts.joined(separator: " ・ "))
-            }
+    private static func colimaStatus(profile: String) -> (running: Bool, vmInfo: String?) {
+        // `colima ls --json` はプロファイルごとに 1 行の JSON を返す
+        let result = Shell.exec(["colima", "ls", "--json"])
+        guard result.status == 0,
+              let json = jsonLines(result.stdout).first(where: { $0["name"] as? String == profile }),
+              (json["status"] as? String)?.lowercased() == "running"
+        else { return (false, nil) }
+
+        var parts: [String] = []
+        if let cpus = (json["cpus"] as? NSNumber)?.intValue {
+            parts.append("CPU \(cpus)")
         }
-        return (false, nil)
+        if let memory = (json["memory"] as? NSNumber)?.int64Value, memory > 0 {
+            parts.append("メモリ \(memory / (1 << 30))GB")
+        }
+        if let disk = (json["disk"] as? NSNumber)?.int64Value, disk > 0 {
+            parts.append("ディスク \(disk / (1 << 30))GB")
+        }
+        if profile != "default" {
+            parts.insert("プロファイル \(profile)", at: 0)
+        }
+        return (true, parts.isEmpty ? nil : parts.joined(separator: " ・ "))
+    }
+
+    /// 1 行に 1 つの JSON オブジェクトが並ぶ出力(docker の --format '{{json .}}' など)を読む
+    static func jsonLines(_ text: String) -> [[String: Any]] {
+        text.split(separator: "\n").compactMap { line in
+            line.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
     }
 
     /// 起動中コンテナの CPU / メモリ使用量(1 秒程度かかるのでスナップショットとは別に取る)
     static func fetchStats() -> [String: ContainerStats] {
-        let result = Shell.run(#"docker stats --no-stream --format '{{json .}}'"#)
+        let result = Shell.exec(["docker", "stats", "--no-stream", "--format", "{{json .}}"])
         guard result.status == 0 else { return [:] }
 
         var stats: [String: ContainerStats] = [:]
-        for line in result.stdout.split(separator: "\n") {
-            guard
-                let data = line.data(using: .utf8),
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let id = json["Container"] as? String
-            else { continue }
+        for json in jsonLines(result.stdout) {
+            guard let id = json["Container"] as? String else { continue }
             let memUsage = ((json["MemUsage"] as? String) ?? "")
                 .components(separatedBy: " / ").first ?? ""
             // stats の ID はフル 64 桁なので、docker ps に合わせて 12 桁に詰める
@@ -279,35 +314,25 @@ enum ColimaService {
 
     /// ディスク使用量の内訳(docker system df は 1 秒近くかかるのでスナップショットとは別に取る)
     static func fetchDiskUsage() -> [DiskUsage] {
-        let result = Shell.run(#"docker system df --format '{{json .}}'"#)
+        let result = Shell.exec(["docker", "system", "df", "--format", "{{json .}}"])
         guard result.status == 0 else { return [] }
 
-        var usages: [DiskUsage] = []
-        for line in result.stdout.split(separator: "\n") {
-            guard
-                let data = line.data(using: .utf8),
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let type = json["Type"] as? String
-            else { continue }
-            usages.append(DiskUsage(
+        return jsonLines(result.stdout).compactMap { json in
+            guard let type = json["Type"] as? String else { return nil }
+            return DiskUsage(
                 type: type,
                 size: (json["Size"] as? String) ?? "",
                 reclaimable: (json["Reclaimable"] as? String) ?? ""
-            ))
+            )
         }
-        return usages
     }
 
     private static func listContainers() -> [Container] {
-        let result = Shell.run(#"docker ps -a --format '{{json .}}'"#)
+        let result = Shell.exec(["docker", "ps", "-a", "--format", "{{json .}}"])
         guard result.status == 0 else { return [] }
 
         var containers: [Container] = []
-        for line in result.stdout.split(separator: "\n") {
-            guard
-                let data = line.data(using: .utf8),
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
+        for json in jsonLines(result.stdout) {
 
             let labels = (json["Labels"] as? String) ?? ""
             func label(_ key: String) -> String? {
@@ -356,8 +381,9 @@ enum ColimaService {
         let ids = containers.map(\.id).filter { !$0.isEmpty }
         guard !ids.isEmpty else { return }
 
-        let result = Shell.run(
-            "docker inspect --format '{{.Id}}|{{.State.StartedAt}}|{{.State.FinishedAt}}|{{json .HostConfig.PortBindings}}' \(ids.joined(separator: " "))"
+        let result = Shell.exec(
+            ["docker", "inspect", "--format",
+             "{{.Id}}|{{.State.StartedAt}}|{{.State.FinishedAt}}|{{json .HostConfig.PortBindings}}"] + ids
         )
         // ps と inspect の間に消えたコンテナがあると終了コードは 1 になるが、
         // 残りのコンテナの結果は stdout に出ているのでそのまま使う
@@ -391,6 +417,9 @@ enum ColimaService {
 
     /// docker のナノ秒付き ISO8601("2026-07-06T14:45:58.123456789Z")をパースする
     /// 未起動・未停止を表す "0001-01-01T00:00:00Z" は nil にする
+    /// ISO8601DateFormatter はスレッドセーフなので使い回す(生成コストが高い)
+    private static let isoFormatter = ISO8601DateFormatter()
+
     private static func parseDockerDate(_ raw: String) -> Date? {
         var text = raw
         if let dot = text.firstIndex(of: ".") {
@@ -399,7 +428,7 @@ enum ColimaService {
             text = String(text[..<dot]) + zone
         }
         guard
-            let date = ISO8601DateFormatter().date(from: text),
+            let date = isoFormatter.date(from: text),
             date.timeIntervalSince1970 > 0
         else { return nil }
         return date
@@ -407,7 +436,7 @@ enum ColimaService {
 
     /// 停止中を含む compose プロジェクト一覧(down 済みでコンテナが無いものは出ない)
     private static func listComposeProjects() -> [ComposeProject] {
-        let result = Shell.run("docker compose ls -a --format json")
+        let result = Shell.exec(["docker", "compose", "ls", "-a", "--format", "json"])
         guard
             result.status == 0,
             let data = result.stdout.data(using: .utf8),

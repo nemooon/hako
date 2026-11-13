@@ -62,7 +62,7 @@ final class MainWindowTests: XCTestCase {
         let web = container("web", name: "shop-web", project: "shop", service: "web")
         let initJob = container("init", name: "shop-init", running: false, project: "shop", service: "init")
         let standalone = container("db", name: "database")
-        let snapshot = ColimaSnapshot(running: true, vmInfo: nil, containers: [initJob, web, standalone],
+        let snapshot = ColimaSnapshot(profile: "default", running: true, vmInfo: nil, containers: [initJob, web, standalone],
                                       composeProjects: [ComposeProject(name: "shop", status: "running(1)", configFiles: [])])
         XCTAssertEqual(ContainerScope.all.containers(in: snapshot, matching: "").map(\.id), ["db", "web", "init"])
         XCTAssertEqual(ContainerScope.standalone.containers(in: snapshot, matching: "").map(\.id), ["db"])
@@ -71,7 +71,7 @@ final class MainWindowTests: XCTestCase {
     }
 
     func testSearchMatchesServiceProjectAndImageWithoutEscapingScope() {
-        let snapshot = ColimaSnapshot(running: true, vmInfo: nil,
+        let snapshot = ColimaSnapshot(profile: "default", running: true, vmInfo: nil,
                                       containers: [container("a", name: "shop-web", project: "shop", service: "API"),
                                                    container("b", name: "database")], composeProjects: [])
         XCTAssertEqual(ContainerScope.all.containers(in: snapshot, matching: "api").map(\.id), ["a"])
