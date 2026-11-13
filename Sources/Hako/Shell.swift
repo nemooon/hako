@@ -37,9 +37,17 @@ enum Shell {
             return Result(status: -1, stdout: "", stderr: error.localizedDescription)
         }
 
-        // waitUntilExit の前に読み切ることで、パイプのバッファ詰まりを防ぐ
+        // waitUntilExit の前に読み切ることで、パイプのバッファ詰まりを防ぐ。
+        // 片方ずつ順に読むと、もう片方のバッファ(約 64KB)が埋まった時点で互いに待ち合うため、
+        // stderr は別スレッドで同時に読む
+        var stderrData = Data()
+        let stderrDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            stderrDone.signal()
+        }
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        stderrDone.wait()
         process.waitUntilExit()
 
         return Result(

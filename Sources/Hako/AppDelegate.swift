@@ -108,8 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
                     self.refresh()
                     return
                 }
+                // 操作後の最初の取得で必ず消費する(変化が無かった場合に残ると、後の本物の変化を握りつぶす)
+                let suppressNotifications = self.suppressNotificationsOnce
+                self.suppressNotificationsOnce = false
                 guard self.snapshot != snapshot else { return }
-                if let old = self.snapshot {
+                if let old = self.snapshot, !suppressNotifications {
                     self.notifyStateChanges(from: old, to: snapshot)
                 }
                 self.snapshot = snapshot
@@ -196,10 +199,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     /// ポート公開しているコンテナが勝手に落ちたり unhealthy になったら通知する
     private func notifyStateChanges(from old: ColimaSnapshot, to new: ColimaSnapshot) {
-        if suppressNotificationsOnce {
-            suppressNotificationsOnce = false
-            return
-        }
         // colima 自体の起動/停止では全コンテナが一斉に変わるので対象外
         guard old.running, new.running else { return }
 

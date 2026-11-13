@@ -346,8 +346,8 @@ enum ColimaService {
         let result = Shell.run(
             "docker inspect --format '{{.Id}}|{{.State.StartedAt}}|{{.State.FinishedAt}}|{{json .HostConfig.PortBindings}}' \(ids.joined(separator: " "))"
         )
-        guard result.status == 0 else { return }
-
+        // ps と inspect の間に消えたコンテナがあると終了コードは 1 になるが、
+        // 残りのコンテナの結果は stdout に出ているのでそのまま使う
         for line in result.stdout.split(separator: "\n") {
             let parts = line.split(separator: "|", maxSplits: 3)
             guard parts.count == 4 else { continue }
