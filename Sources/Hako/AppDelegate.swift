@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     // MARK: - NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
+        refreshInstalledEditors()
         refresh()
         fetchStats()
         fetchDiskUsage()
@@ -333,11 +334,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     }
 
     private func rebuildMenu() {
-        windowModel.snapshot = snapshot
-        windowModel.busyMessage = busyMessage
-        windowModel.statsByID = statsByID
-        windowModel.diskUsage = diskUsage
-        windowModel.colimaVersion = colimaVersion
+        // @Observable は同じ値の代入でも変更として通知するため、変わった値だけ書き込む
+        // (stats の更新だけでサイドバーやツールバーまで再描画されるのを防ぐ)
+        if windowModel.snapshot != snapshot { windowModel.snapshot = snapshot }
+        if windowModel.busyMessage != busyMessage { windowModel.busyMessage = busyMessage }
+        if windowModel.statsByID != statsByID { windowModel.statsByID = statsByID }
+        if windowModel.diskUsage != diskUsage { windowModel.diskUsage = diskUsage }
+        if windowModel.colimaVersion != colimaVersion { windowModel.colimaVersion = colimaVersion }
         sync(menu, with: buildEntries())
     }
 
@@ -363,10 +366,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     private static let editorDefaultsKey = "editorBundleID"
 
-    private var installedEditors: [Editor] {
-        Self.editorCandidates.filter {
+    /// インストール済みのエディタ。LaunchServices への問い合わせはメニュー再構築ごとに
+    /// 繰り返すと重いので、メニューやウィンドウを開いたときだけ調べ直す
+    private lazy var installedEditors: [Editor] = Self.detectInstalledEditors()
+
+    private static func detectInstalledEditors() -> [Editor] {
+        editorCandidates.filter {
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil
         }
+    }
+
+    private func refreshInstalledEditors() {
+        let detected = Self.detectInstalledEditors()
+        guard detected.map(\.bundleID) != installedEditors.map(\.bundleID) else { return }
+        installedEditors = detected
+        rebuildMenu()
     }
 
     /// 選択中のエディタ。未選択(またはアンインストール済み)なら
@@ -934,6 +948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         NSApp.setActivationPolicy(.regular)
         mainWindow?.open()
+        refreshInstalledEditors()
         refresh()
         fetchStats()
         fetchDiskUsage()

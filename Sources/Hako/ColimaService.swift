@@ -128,11 +128,20 @@ enum ColimaService {
         guard status.running else {
             return ColimaSnapshot(running: false, vmInfo: nil, containers: [], composeProjects: [])
         }
+        // コンテナ一覧(ps → inspect)と compose 一覧は互いに依存しないので同時に取る
+        var containers: [Container] = []
+        var composeProjects: [ComposeProject] = []
+        let group = DispatchGroup()
+        DispatchQueue.global(qos: .userInitiated).async(group: group) {
+            composeProjects = listComposeProjects()
+        }
+        containers = listContainers()
+        group.wait()
         let snapshot = ColimaSnapshot(
             running: true,
             vmInfo: status.vmInfo,
-            containers: listContainers(),
-            composeProjects: listComposeProjects()
+            containers: containers,
+            composeProjects: composeProjects
         )
         // HAKO_DEMO=1 で起動すると、スクリーンショット用に名前を架空のものへ置き換える
         if ProcessInfo.processInfo.environment["HAKO_DEMO"] != nil {
