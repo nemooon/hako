@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Hako"
 BUNDLE_ID="com.nemooon.hako"
-VERSION="0.5.1"
+VERSION="0.6"
 DIST="dist/${APP_NAME}.app"
 
 # SwiftBuild がリンク時の SDK を deployment target として記録する環境を回避する。
