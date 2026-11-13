@@ -158,8 +158,10 @@ private struct UpdateSection: View {
 final class UpdateWindowController: NSWindowController, NSWindowDelegate {
     private let model: UpdateModel
 
+    /// relaunchHako: 再起動しない場合(プレビュー中)にウィンドウを閉じるのも呼び出し側の役目
+    /// restartColima: 再起動を始められなければ false(別の操作の処理中など)
     init(model: UpdateModel, relaunchHako: @escaping () -> Void,
-         restartColima: @escaping () -> Void, colimaRunning: @escaping () -> Bool) {
+         restartColima: @escaping () -> Bool, colimaRunning: @escaping () -> Bool) {
         self.model = model
         // 大きさは中身で決まるので、利用者によるリサイズはさせない
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
@@ -173,13 +175,14 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
 
         let hosting = NSHostingController(rootView: UpdateView(
             model: model,
-            restartHako: { [weak self] in
-                relaunchHako()
-                self?.window?.performClose(nil) // 再起動しなかった場合(プレビュー中)はウィンドウだけ閉じる
-            },
+            restartHako: relaunchHako,
             restartColima: { [weak self] in
-                restartColima()
-                self?.window?.performClose(nil)
+                // 始められなかったときはウィンドウを閉じずに知らせる(再起動したと思い込ませない)
+                if restartColima() {
+                    self?.window?.performClose(nil)
+                } else {
+                    NSSound.beep()
+                }
             },
             colimaRunning: colimaRunning,
             // close() は windowShouldClose を通らないので performClose で閉じる

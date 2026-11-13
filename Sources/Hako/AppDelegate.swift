@@ -212,8 +212,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let appPath = Bundle.main.bundleURL.path
             updateWindow = UpdateWindowController(
                 model: UpdateModel(backend: .live(), store: store),
-                relaunchHako: { if !preview { AppRelauncher.relaunch(appPath: appPath) } },
-                restartColima: { [weak self] in if !preview { self?.commands.restartColima() } },
+                relaunchHako: { [weak self] in
+                    if preview {
+                        self?.updateWindow?.window?.performClose(nil)
+                    } else {
+                        AppRelauncher.relaunch(appPath: appPath)
+                    }
+                },
+                restartColima: { [weak self] in preview || self?.commands.restartColima() == true },
                 colimaRunning: { [weak self] in preview || self?.store.snapshot?.running == true }
             )
         }

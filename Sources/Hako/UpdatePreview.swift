@@ -12,10 +12,11 @@ enum UpdatePreview {
 
     static let variable = "HAKO_UPDATE_PREVIEW"
 
-    /// 環境変数が無ければ nil(プレビューしない)。認識できない値は成功として扱う
+    /// 環境変数が無いか、0 / false / no / off なら nil(プレビューしない)。認識できない値は成功として扱う
     static func outcome(from environment: [String: String]) -> Outcome? {
         guard let value = environment[variable] else { return nil }
         switch value.lowercased() {
+        case "0", "false", "no", "off": return nil
         case "fail": return .failure
         case "lag": return .lag
         default: return .success
@@ -81,7 +82,7 @@ enum UpdatePreview {
         }
     }
 
-    static func backend(_ outcome: Outcome, colimaVersion: @escaping () async -> String?,
+    static func backend(_ outcome: Outcome, colimaVersion: @escaping @MainActor () async -> String?,
                         delay: UInt64 = 2_000_000_000) -> UpdateModel.Backend {
         UpdateModel.Backend(
             latestRelease: { release(for: $0) },

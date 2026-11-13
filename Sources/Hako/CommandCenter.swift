@@ -45,8 +45,12 @@ final class CommandCenter {
         execute("Colima を起動中…", ["colima", "start", "--profile", store.colimaProfile])
     }
 
-    func restartColima() {
+    /// 別の操作の処理中なら何もせず false を返す(呼び出し側が黙って閉じないように)
+    @discardableResult
+    func restartColima() -> Bool {
+        guard !store.isBusy else { return false }
         execute("Colima を再起動中…", ["colima", "restart", "--profile", store.colimaProfile])
+        return true
     }
 
     func stopColima() {

@@ -9,12 +9,13 @@ final class UpdateModelTests: XCTestCase {
     /// list の結果をパッケージごとに返し、upgrade 後は新しいバージョンを返す偽の brew
     private func fakeBrew(hako: String? = "0.6", colima: String? = "0.10.3",
                           upgradedTo: [String: String] = ["hako": "0.7", "colima": "0.11.0"],
-                          upgrade: Shell.Result = FakeCommandRunner.ok()) -> FakeCommandRunner {
+                          upgrade: Shell.Result = FakeCommandRunner.ok(),
+                          xattr: Shell.Result = FakeCommandRunner.ok()) -> FakeCommandRunner {
         let fake = FakeCommandRunner()
         var upgraded = Set<String>()
         fake.respond = { command in
             let package = command.last == "nemooon/tap/hako" || command.last == "hako" ? "hako" : "colima"
-            if command.first == HomebrewUpdater.xattr { return FakeCommandRunner.ok() }
+            if command.first == HomebrewUpdater.xattr { return xattr }
             if command.contains("upgrade") {
                 if upgrade.status == 0 { upgraded.insert(package) }
                 return upgrade
@@ -109,6 +110,59 @@ final class UpdateModelTests: XCTestCase {
         let model = UpdateModel(backend: backend(fakeBrew()), store: StatusStore())
         await model.refresh()
         await model.update(.hako)
+        XCTAssertEqual(model.hako.phase, .installed)
+    }
+
+    /// 隔離属性の削除だけ失敗しても、更新は済んでいるので完了として扱い、再起動もできるようにする
+    func testQuarantineFailureStillCountsAsInstalled() async {
+        let store = StatusStore()
+        let model = UpdateModel(backend: backend(fakeBrew(xattr: FakeCommandRunner.fail("Operation not permitted"))), store: store)
+        await model.refresh()
+        await model.update(.hako)
+        XCTAssertEqual(model.hako.phase, .installed)
+        XCTAssertTrue(model.hako.error?.contains("隔離属性を削除できませんでした") == true)
+        XCTAssertNil(store.availableUpdate)
+    }
+
+    /// 先に始まった確認が更新中に終わっても、「更新中」を上書きしない(ウィンドウを続けて開いた場合)。
+    /// 上書きされると閉じるボタンや他方の更新ボタンが効いてしまう
+    func testStaleRefreshDoesNotOverwriteUpdating() async {
+        var gates: [CheckedContinuation<Void, Never>] = []
+        var upgradeGate: CheckedContinuation<Void, Never>?
+        let fake = fakeBrew()
+        var backend = backend(fake)
+        backend.updater = HomebrewUpdater(brew: brew) { path, arguments in
+            if arguments.first == "upgrade" { await withCheckedContinuation { upgradeGate = $0 } }
+            return await fake.runner(path, arguments)
+        }
+        let releases = ["nemooon/hako": UpdateChecker.Release(version: "0.7", notes: ""),
+                        "abiosoft/colima": UpdateChecker.Release(version: "0.11.0", notes: "")]
+        backend.latestRelease = { repo in
+            await withCheckedContinuation { gates.append($0) }
+            return releases[repo]
+        }
+        let model = UpdateModel(backend: backend, store: StatusStore())
+        func waitUntil(_ condition: () -> Bool) async {
+            for _ in 0..<200 where !condition() { try? await Task.sleep(nanoseconds: 5_000_000) }
+        }
+
+        let first = Task { await model.refresh() }
+        await waitUntil { gates.count == 2 }
+        let second = Task { await model.refresh() }
+        await waitUntil { gates.count == 4 }
+        gates[3].resume(); gates[2].resume() // 後から始めた確認が先に終わる
+        await second.value
+        XCTAssertEqual(model.hako.phase, .available)
+
+        let updating = Task { await model.update(.hako) }
+        await waitUntil { upgradeGate != nil }
+        gates[0].resume(); gates[1].resume() // 先に始めた確認が更新中に終わる
+        await first.value
+        XCTAssertEqual(model.hako.phase, .updating)
+        XCTAssertTrue(model.isUpdating)
+
+        upgradeGate?.resume()
+        await updating.value
         XCTAssertEqual(model.hako.phase, .installed)
     }
 

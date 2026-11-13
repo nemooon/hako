@@ -12,6 +12,13 @@ final class UpdatePreviewTests: XCTestCase {
         XCTAssertNil(UpdatePreview.outcome(from: ["HAKO_DEMO": "1"]))
     }
 
+    /// 無効にするつもりの値ではプレビューしない
+    func testDisablingValuesTurnPreviewOff() {
+        for value in ["0", "false", "FALSE", "no", "off"] {
+            XCTAssertNil(UpdatePreview.outcome(from: ["HAKO_UPDATE_PREVIEW": value]), value)
+        }
+    }
+
     func testOutcomeValues() {
         XCTAssertEqual(UpdatePreview.outcome(from: ["HAKO_UPDATE_PREVIEW": "1"]), .success)
         XCTAssertEqual(UpdatePreview.outcome(from: ["HAKO_UPDATE_PREVIEW": ""]), .success)

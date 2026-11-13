@@ -12,6 +12,13 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertNil(UpdateChecker.parseRelease(Data(#"{"message":"rate limited"}"#.utf8)))
     }
 
+    /// つながりの悪いネットワークで「確認しています…」が長く続かないよう、待ち時間を短くする
+    func testReleaseRequestUsesShortTimeout() {
+        let request = UpdateChecker.request(repo: "nemooon/hako")
+        XCTAssertEqual(request.timeoutInterval, 15)
+        XCTAssertEqual(request.url?.absoluteString, "https://api.github.com/repos/nemooon/hako/releases/latest")
+    }
+
     func testVersionComparison() {
         XCTAssertTrue(UpdateChecker.isNewer("0.7", than: "0.6"))
         XCTAssertTrue(UpdateChecker.isNewer("0.6.1", than: "0.6"))

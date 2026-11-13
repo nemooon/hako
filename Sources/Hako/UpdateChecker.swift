@@ -27,10 +27,16 @@ enum UpdateChecker {
     }
 
     /// repo("owner/name")の最新リリース。オフラインや API エラーは nil(次回また確認する)
-    static func latestRelease(repo: String) async -> Release? {
+    static func request(repo: String) -> URLRequest {
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
+        // 既定の 60 秒だと、つながりの悪いネットワークで「確認しています…」が長く続く
+        request.timeoutInterval = 15
+        return request
+    }
+
+    static func latestRelease(repo: String) async -> Release? {
+        guard let (data, _) = try? await URLSession.shared.data(for: request(repo: repo)) else { return nil }
         return parseRelease(data)
     }
 

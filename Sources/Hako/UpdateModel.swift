@@ -29,10 +29,11 @@ struct UpdateItem: Equatable {
 @MainActor @Observable
 final class UpdateModel {
     struct Backend {
-        var latestRelease: (_ repo: String) async -> UpdateChecker.Release?
+        // async let の子タスクから呼ぶので、メインアクター上で動く(Sendable な)クロージャにしておく
+        var latestRelease: @MainActor (_ repo: String) async -> UpdateChecker.Release?
         var hakoVersion: String?
         var hakoAppPath: String?
-        var colimaVersion: () async -> String?
+        var colimaVersion: @MainActor () async -> String?
         var updater: HomebrewUpdater?
 
         static func live() -> Backend {
@@ -59,6 +60,8 @@ final class UpdateModel {
     private(set) var colima = UpdateItem()
 
     @ObservationIgnored private let backend: Backend
+    // 確認や更新を始めるたびに進める。先に始まった確認の結果で、後の状態を上書きしないために使う
+    @ObservationIgnored private var generation = 0
     @ObservationIgnored private let store: StatusStore
 
     init(backend: Backend, store: StatusStore) {
@@ -77,6 +80,8 @@ final class UpdateModel {
 
     func refresh() async {
         guard !isUpdating else { return }
+        generation += 1
+        let started = generation
         hako = UpdateItem()
         colima = UpdateItem()
         async let pendingHakoRelease = backend.latestRelease(Self.hakoRepo)
@@ -84,16 +89,20 @@ final class UpdateModel {
         async let colimaCurrent = backend.colimaVersion()
 
         let hakoRelease = await pendingHakoRelease
-        hako = await check(.hako, current: backend.hakoVersion, release: hakoRelease,
-                           notRunnable: backend.hakoAppPath == nil ? ".app として動いていないため、アップデートできません" : nil)
+        let checkedHako = await check(.hako, current: backend.hakoVersion, release: hakoRelease,
+                                      notRunnable: backend.hakoAppPath == nil ? ".app として動いていないため、アップデートできません" : nil)
+        guard started == generation else { return }
+        hako = checkedHako
         if hakoRelease != nil {
             store.recordHakoUpdate(hako.phase == .installed ? nil : hako.newerLatest)
         }
 
         let current = await colimaCurrent
         let colimaRelease = await pendingColimaRelease
-        colima = await check(.colima, current: current, release: colimaRelease,
-                             notRunnable: current == nil ? "Colima が見つかりません" : nil)
+        let checkedColima = await check(.colima, current: current, release: colimaRelease,
+                                        notRunnable: current == nil ? "Colima が見つかりません" : nil)
+        guard started == generation else { return }
+        colima = checkedColima
         if colimaRelease != nil {
             store.recordColimaUpdate(version: current, available: colima.newerLatest)
         }
@@ -129,23 +138,32 @@ final class UpdateModel {
         var item = package == .hako ? hako : colima
         guard item.phase == .available, let latest = item.latest else { return }
 
+        generation += 1 // 実行中の確認があれば、その結果は捨てる
         item.phase = .updating
         item.error = nil
         set(package, item)
         do {
             try await updater.upgrade(package, to: latest, appPath: backend.hakoAppPath)
-            item.phase = .installed
-            if package == .colima {
-                item.current = latest
-                store.recordColimaUpdate(version: latest, available: nil)
-            } else {
-                store.recordHakoUpdate(nil)
-            }
+            markInstalled(&item, package, latest)
+        } catch UpdateError.quarantineRemovalFailed(let detail, let command) {
+            // 更新自体は済んでいるので完了として扱い、手で打つコマンドを添えて再起動もできるようにする
+            markInstalled(&item, package, latest)
+            item.error = UpdateError.quarantineRemovalFailed(detail: detail, command: command).message
         } catch {
             item.phase = .available
             item.error = (error as? UpdateError)?.message ?? error.localizedDescription
         }
         set(package, item)
+    }
+
+    private func markInstalled(_ item: inout UpdateItem, _ package: UpdatePackage, _ latest: String) {
+        item.phase = .installed
+        if package == .colima {
+            item.current = latest
+            store.recordColimaUpdate(version: latest, available: nil)
+        } else {
+            store.recordHakoUpdate(nil)
+        }
     }
 
     private func set(_ package: UpdatePackage, _ item: UpdateItem) {
