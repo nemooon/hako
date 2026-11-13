@@ -175,7 +175,16 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
 
         let hosting = NSHostingController(rootView: UpdateView(
             model: model,
-            restartHako: relaunchHako,
+            restartHako: { [weak model] in
+                // 隔離属性を外せなかったら再起動しない(新しい Hako が起動できずに消えるため)
+                Task { @MainActor in
+                    if await model?.prepareHakoRelaunch() == true {
+                        relaunchHako()
+                    } else {
+                        NSSound.beep()
+                    }
+                }
+            },
             restartColima: { [weak self] in
                 // 始められなかったときはウィンドウを閉じずに知らせる(再起動したと思い込ませない)
                 if restartColima() {
@@ -220,6 +229,7 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
 
 /// 自分の終了を待ってから同じ .app を開き直す
 /// (新しいプロセスをすぐ立ち上げると、メニューバーのアイコンが一瞬 2 つ並ぶため)
+@MainActor
 enum AppRelauncher {
     static func relaunch(appPath: String) {
         let process = Process()

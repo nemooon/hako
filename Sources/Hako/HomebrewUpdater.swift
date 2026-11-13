@@ -103,6 +103,11 @@ struct HomebrewUpdater {
         }
 
         guard package == .hako, let appPath else { return }
+        try await removeQuarantine(appPath: appPath)
+    }
+
+    /// Developer ID 署名が無いので、隔離属性が残っていると Gatekeeper が起動を止める
+    func removeQuarantine(appPath: String) async throws {
         let xattr = await run(Self.xattr, ["-dr", "com.apple.quarantine", appPath])
         guard xattr.status == 0 else {
             throw UpdateError.quarantineRemovalFailed(

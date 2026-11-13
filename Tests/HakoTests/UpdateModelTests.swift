@@ -166,6 +166,48 @@ final class UpdateModelTests: XCTestCase {
         XCTAssertEqual(model.hako.phase, .installed)
     }
 
+    /// Colima の確認が終わる前に Hako の更新を始めても、Colima 欄が「確認中」のまま残らない
+    func testUpdatingOneItemDoesNotStrandTheOther() async {
+        var colimaGate: CheckedContinuation<Void, Never>?
+        var backend = backend(fakeBrew())
+        let releases = ["nemooon/hako": UpdateChecker.Release(version: "0.7", notes: ""),
+                        "abiosoft/colima": UpdateChecker.Release(version: "0.11.0", notes: "")]
+        backend.latestRelease = { repo in
+            if repo == "abiosoft/colima" { await withCheckedContinuation { colimaGate = $0 } }
+            return releases[repo]
+        }
+        let model = UpdateModel(backend: backend, store: StatusStore())
+        let refreshing = Task { await model.refresh() }
+        for _ in 0..<400 where !(model.hako.phase == .available && colimaGate != nil) {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(model.hako.phase, .available)
+
+        await model.update(.hako)
+        colimaGate?.resume()
+        await refreshing.value
+        XCTAssertEqual(model.colima.phase, .available)
+    }
+
+    /// 隔離属性が外れていないまま再起動すると新しい Hako が起動できずに消えるので、直前にもう一度外し、
+    /// 失敗したら再起動させない
+    func testRelaunchIsRefusedWhileQuarantined() async {
+        let model = UpdateModel(backend: backend(fakeBrew(xattr: FakeCommandRunner.fail("Operation not permitted"))), store: StatusStore())
+        await model.refresh()
+        await model.update(.hako)
+        let ready = await model.prepareHakoRelaunch()
+        XCTAssertFalse(ready)
+        XCTAssertTrue(model.hako.error?.contains("xattr -dr com.apple.quarantine") == true)
+    }
+
+    func testRelaunchIsAllowedOnceQuarantineIsRemoved() async {
+        let model = UpdateModel(backend: backend(fakeBrew()), store: StatusStore())
+        await model.refresh()
+        await model.update(.hako)
+        let ready = await model.prepareHakoRelaunch()
+        XCTAssertTrue(ready)
+    }
+
     func testFailureReturnsToAvailableWithMessage() async {
         let model = UpdateModel(backend: backend(fakeBrew(upgrade: FakeCommandRunner.fail("Error: boom"))), store: StatusStore())
         await model.refresh()

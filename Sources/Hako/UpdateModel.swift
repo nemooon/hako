@@ -29,7 +29,8 @@ struct UpdateItem: Equatable {
 @MainActor @Observable
 final class UpdateModel {
     struct Backend {
-        // async let の子タスクから呼ぶので、メインアクター上で動く(Sendable な)クロージャにしておく
+        // メインアクター上で動くクロージャにしておく(Swift 6 の厳しい検査に通すには、Backend 全体と
+        // HomebrewUpdater の Sendable 化がさらに必要)
         var latestRelease: @MainActor (_ repo: String) async -> UpdateChecker.Release?
         var hakoVersion: String?
         var hakoAppPath: String?
@@ -60,8 +61,10 @@ final class UpdateModel {
     private(set) var colima = UpdateItem()
 
     @ObservationIgnored private let backend: Backend
-    // 確認や更新を始めるたびに進める。先に始まった確認の結果で、後の状態を上書きしないために使う
-    @ObservationIgnored private var generation = 0
+    // 欄ごとに、確認や更新を始めるたびに進める。先に始まった確認の結果で、後の状態を上書きしないために使う
+    // (欄ごとに分けるのは、片方の更新を始めても、もう片方の確認結果は捨てないため)
+    @ObservationIgnored private var hakoGeneration = 0
+    @ObservationIgnored private var colimaGeneration = 0
     @ObservationIgnored private let store: StatusStore
 
     init(backend: Backend, store: StatusStore) {
@@ -80,8 +83,9 @@ final class UpdateModel {
 
     func refresh() async {
         guard !isUpdating else { return }
-        generation += 1
-        let started = generation
+        hakoGeneration += 1
+        colimaGeneration += 1
+        let (hakoStarted, colimaStarted) = (hakoGeneration, colimaGeneration)
         hako = UpdateItem()
         colima = UpdateItem()
         async let pendingHakoRelease = backend.latestRelease(Self.hakoRepo)
@@ -91,17 +95,18 @@ final class UpdateModel {
         let hakoRelease = await pendingHakoRelease
         let checkedHako = await check(.hako, current: backend.hakoVersion, release: hakoRelease,
                                       notRunnable: backend.hakoAppPath == nil ? ".app として動いていないため、アップデートできません" : nil)
-        guard started == generation else { return }
-        hako = checkedHako
-        if hakoRelease != nil {
-            store.recordHakoUpdate(hako.phase == .installed ? nil : hako.newerLatest)
+        if hakoStarted == hakoGeneration {
+            hako = checkedHako
+            if hakoRelease != nil {
+                store.recordHakoUpdate(hako.phase == .installed ? nil : hako.newerLatest)
+            }
         }
 
         let current = await colimaCurrent
         let colimaRelease = await pendingColimaRelease
         let checkedColima = await check(.colima, current: current, release: colimaRelease,
                                         notRunnable: current == nil ? "Colima が見つかりません" : nil)
-        guard started == generation else { return }
+        guard colimaStarted == colimaGeneration else { return }
         colima = checkedColima
         if colimaRelease != nil {
             store.recordColimaUpdate(version: current, available: colima.newerLatest)
@@ -138,7 +143,8 @@ final class UpdateModel {
         var item = package == .hako ? hako : colima
         guard item.phase == .available, let latest = item.latest else { return }
 
-        generation += 1 // 実行中の確認があれば、その結果は捨てる
+        // 実行中の確認があれば、この欄の結果だけ捨てる
+        if package == .hako { hakoGeneration += 1 } else { colimaGeneration += 1 }
         item.phase = .updating
         item.error = nil
         set(package, item)
@@ -154,6 +160,19 @@ final class UpdateModel {
             item.error = (error as? UpdateError)?.message ?? error.localizedDescription
         }
         set(package, item)
+    }
+
+    /// Hako を再起動してよいか。隔離属性が残ったままだと新しい Hako が起動できずに消えてしまうので、
+    /// 直前にもう一度外し、外せなければ手で打つコマンドを添えて false を返す
+    func prepareHakoRelaunch() async -> Bool {
+        guard let updater = backend.updater, let appPath = backend.hakoAppPath else { return false }
+        do {
+            try await updater.removeQuarantine(appPath: appPath)
+            return true
+        } catch {
+            hako.error = (error as? UpdateError)?.message ?? error.localizedDescription
+            return false
+        }
     }
 
     private func markInstalled(_ item: inout UpdateItem, _ package: UpdatePackage, _ latest: String) {

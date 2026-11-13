@@ -24,10 +24,11 @@ final class CommandCenterTests: XCTestCase {
         let center = CommandCenter(store: store, editors: EditorPreferences(isInstalled: { _ in false }))
 
         let busy = Task { await store.run(message: "処理中", arguments: ["docker", "volume", "prune", "-f"]) }
-        for _ in 0..<200 where !store.isBusy { try? await Task.sleep(nanoseconds: 5_000_000) }
+        for _ in 0..<1000 where !store.isBusy { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertTrue(store.isBusy, "処理中にならないまま時間切れ")
         XCTAssertFalse(center.restartColima())
 
-        for _ in 0..<200 where release == nil { try? await Task.sleep(nanoseconds: 5_000_000) }
+        for _ in 0..<1000 where release == nil { try? await Task.sleep(nanoseconds: 5_000_000) }
         release?.resume()
         _ = await busy.value
         XCTAssertTrue(center.restartColima())
