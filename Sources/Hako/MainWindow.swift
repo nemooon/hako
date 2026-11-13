@@ -211,7 +211,7 @@ private struct ProjectSidebarRow: View {
     let selected: Bool
 
     private var runningCount: Int { containers.filter(\.isRunning).count }
-    private var unhealthy: Bool { containers.contains { $0.isRunning && $0.status.contains("unhealthy") } }
+    private var unhealthy: Bool { containers.contains { $0.isRunning && $0.isUnhealthy } }
     private var status: String {
         if unhealthy { return "要確認" }
         if runningCount == 0 { return "停止中" }
@@ -276,7 +276,7 @@ private struct ContainerTableRow: Identifiable {
     var cpuPercent: Double { container.isRunning ? (stats?.cpuPercent ?? -1) : -1 }
     var memoryBytes: Double { container.isRunning ? (stats?.memoryBytes ?? -1) : -1 }
     var status: String {
-        if container.isRunning { return container.status.contains("unhealthy") ? "要確認" : "実行中" }
+        if container.isRunning { return container.isUnhealthy ? "要確認" : "実行中" }
         return container.state == "paused" ? "一時停止" : "停止中"
     }
 }
@@ -313,7 +313,7 @@ private struct ContainerTableView: View {
                     Image(systemName: row.container.isRunning ? "circle.fill" : "circle")
                         .font(.system(size: 7)).accessibilityHidden(true)
                         .foregroundStyle(selection == row.id ? Color.primary :
-                            (row.container.status.contains("unhealthy") ? .orange : (row.container.isRunning ? .green : .secondary)))
+                            (row.container.isUnhealthy ? .orange : (row.container.isRunning ? .green : .secondary)))
                     Text(row.status)
                 }
                 .help(row.container.friendlyStatus)
@@ -351,10 +351,10 @@ private struct ContainerStatusView: View {
 
     var body: some View {
         Label(container.friendlyStatus,
-              systemImage: container.status.contains("unhealthy") ? "exclamationmark.triangle.fill" :
+              systemImage: container.isUnhealthy ? "exclamationmark.triangle.fill" :
                 (container.isRunning ? "checkmark.circle.fill" : "pause.circle"))
             .font(.caption)
-            .foregroundStyle(container.status.contains("unhealthy") ? Color.orange :
+            .foregroundStyle(container.isUnhealthy ? Color.orange :
                                 (container.isRunning ? .green : .secondary))
     }
 }

@@ -217,8 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             if prev.isRunning && !container.isRunning {
                 notify(title: "コンテナが停止しました", body: label)
             } else if container.isRunning,
-                      container.status.contains("unhealthy"),
-                      !prev.status.contains("unhealthy") {
+                      container.isUnhealthy,
+                      !prev.isUnhealthy {
                 notify(title: "コンテナが unhealthy です", body: label)
             }
         }

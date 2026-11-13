@@ -20,6 +20,8 @@ struct Container: Equatable {
     let composeService: String?
 
     var isRunning: Bool { state == "running" }
+    /// ヘルスチェックに失敗しているか(docker ps の Status 列に "(unhealthy)" が付く)
+    var isUnhealthy: Bool { status.contains("unhealthy") }
     var hostPorts: [String] { ports.map(\.host) }
 
     /// レジストリのプレフィックスを除いたイメージ名(タグは残す)
@@ -35,7 +37,7 @@ struct Container: Equatable {
         formatter.dateTimeStyle = .named
         if isRunning, let startedAt {
             var text = "\(formatter.localizedString(for: startedAt, relativeTo: Date()))に起動"
-            if status.contains("unhealthy") {
+            if isUnhealthy {
                 text += " ・ unhealthy"
             }
             return text
@@ -46,12 +48,14 @@ struct Container: Equatable {
         return status // 時刻が取れなかったときは docker の表記のまま
     }
 
-    /// status は毎分変わる文字列なので比較から外す(メニューの無駄な再構築を防ぐ)
+    /// status は毎分変わる文字列なので比較から外す(メニューの無駄な再構築を防ぐ)。
+    /// ただし unhealthy への変化は通知・表示に必要なので、その有無だけは比べる
     static func == (lhs: Container, rhs: Container) -> Bool {
         lhs.id == rhs.id
             && lhs.name == rhs.name
             && lhs.image == rhs.image
             && lhs.state == rhs.state
+            && lhs.isUnhealthy == rhs.isUnhealthy
             && lhs.ports == rhs.ports
             && lhs.startedAt == rhs.startedAt
             && lhs.finishedAt == rhs.finishedAt
