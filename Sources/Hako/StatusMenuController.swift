@@ -179,21 +179,19 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         if let version = store.availableUpdate {
             var update = MenuEntry.action(
                 "Hako の新しいバージョン \(version) があります",
-                #selector(openURL(_:)),
-                icon: "arrow.down.circle",
-                represented: UpdateChecker.hakoReleasesPageURL
+                #selector(openUpdates),
+                icon: "arrow.down.circle"
             )
-            update.subtitle = "brew upgrade --cask hako で更新できます"
+            update.subtitle = "クリックしてアップデート"
             entries.append(update)
         }
         if let version = store.availableColimaUpdate {
             var update = MenuEntry.action(
                 "Colima の新しいバージョン \(version) があります",
-                #selector(openURL(_:)),
-                icon: "arrow.down.circle",
-                represented: UpdateChecker.colimaReleasesPageURL
+                #selector(openUpdates),
+                icon: "arrow.down.circle"
             )
-            update.subtitle = "brew upgrade colima で更新できます"
+            update.subtitle = "クリックしてアップデート"
             entries.append(update)
         }
         entries.append(settingsEntry())
@@ -541,6 +539,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func restartColima() { commands.restartColima() }
     @objc private func stopColima() { commands.stopColima() }
     @objc private func openCleanup() { commands.openCleanup() }
+    @objc private func openUpdates() { commands.openUpdates() }
     @objc private func pruneVolumes() { commands.pruneVolumes() }
 
     @objc private func runContainerCommand(_ sender: NSMenuItem) {

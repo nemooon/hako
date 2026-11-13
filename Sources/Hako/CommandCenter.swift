@@ -7,6 +7,8 @@ final class CommandCenter {
     private let editors: EditorPreferences
     /// 整理画面はウィンドウ管理側(AppDelegate)が持つ
     var openCleanup: () -> Void = {}
+    /// アップデートウィンドウも同様
+    var openUpdates: () -> Void = {}
 
     init(store: StatusStore, editors: EditorPreferences) {
         self.store = store

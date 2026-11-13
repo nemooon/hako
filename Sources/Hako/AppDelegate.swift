@@ -10,12 +10,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var statusMenu: StatusMenuController?
     private var mainWindow: MainWindowController?
     private var cleanupWindow: CleanupWindowController?
+    private var updateWindow: UpdateWindowController?
     private var refreshTimer: Timer?
     private var windowRefreshTimer: Timer?
     private var updateCheckTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         commands.openCleanup = { [weak self] in self?.openCleanup() }
+        commands.openUpdates = { [weak self] in self?.openUpdates() }
         let statusMenu = StatusMenuController(store: store, commands: commands, editors: editors)
         statusMenu.openMainWindow = { [weak self] in self?.openMainWindow() }
         self.statusMenu = statusMenu
@@ -59,6 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let main = NSMenu()
         let appMenu = NSMenu(title: "Hako")
         appMenu.addItem(withTitle: "Hako について", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let checkForUpdates = appMenu.addItem(withTitle: "アップデートを確認…", action: #selector(openUpdatesAction), keyEquivalent: "")
+        checkForUpdates.target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hako を隠す", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
@@ -189,6 +193,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         RunLoop.main.add(timer, forMode: .common)
         windowRefreshTimer = timer
+    }
+
+    @objc private func openUpdatesAction() { openUpdates() }
+
+    private func openUpdates() {
+        if updateWindow == nil {
+            updateWindow = UpdateWindowController(
+                model: UpdateModel(backend: .live(), store: store),
+                restartColima: { [weak self] in self?.commands.restartColima() },
+                colimaRunning: { [weak self] in self?.store.snapshot?.running == true }
+            )
+        }
+        updateWindow?.open()
     }
 
     private func openCleanup() {
