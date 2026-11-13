@@ -115,6 +115,16 @@ final class StatusStore {
         }
     }
 
+    /// アップデートウィンドウで確認・更新した結果をメニューバー側にも反映する
+    func recordHakoUpdate(_ available: String?) {
+        assign(\.availableUpdate, available)
+    }
+
+    func recordColimaUpdate(version: String?, available: String?) {
+        assign(\.colimaVersion, version)
+        assign(\.availableColimaUpdate, available)
+    }
+
     private func apply(_ snapshot: ColimaSnapshot) {
         // 操作後の最初の取得で必ず消費する(変化が無かった場合に残ると、後の本物の変化を握りつぶす)
         let suppress = suppressNextNotifications
