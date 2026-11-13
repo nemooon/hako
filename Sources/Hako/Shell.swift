@@ -74,13 +74,24 @@ enum Shell {
         )
     }
 
-    /// バックグラウンドで実行し、完了時にメインスレッドでコールバックする
-    static func execAsync(_ arguments: [String], completion: @escaping (Result) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = exec(arguments)
-            DispatchQueue.main.async {
-                completion(result)
-            }
+    /// exec を待ち合わせできる形にしたもの(完了までメインスレッドを塞がない)
+    static func exec(_ arguments: [String]) async -> Result {
+        await background { exec(arguments) }
+    }
+
+    /// runProgram を待ち合わせできる形にしたもの
+    @discardableResult
+    static func runProgram(_ path: String, _ arguments: [String]) async -> Result {
+        await background { runProgram(path, arguments) }
+    }
+}
+
+/// プロセスの終了待ちのような同期で塞ぐ処理を、Swift Concurrency のスレッドプール外で実行する。
+/// (協調スレッドプールを塞ぐと、他の Task が進まなくなる)
+func background<T>(qos: DispatchQoS.QoSClass = .userInitiated, _ work: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: qos).async {
+            continuation.resume(returning: work())
         }
     }
 }

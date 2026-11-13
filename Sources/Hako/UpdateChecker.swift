@@ -10,23 +10,19 @@ enum UpdateChecker {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
     }
 
-    /// repo("owner/name")の最新リリースが current より新しければ、そのバージョン文字列を
-    /// completion に渡す(なければ nil)。completion はバックグラウンドスレッドから呼ばれる
-    static func check(repo: String, current: String, completion: @escaping (String?) -> Void) {
+    /// repo("owner/name")の最新リリースが current より新しければ、そのバージョン文字列を返す(なければ nil)
+    static func newerRelease(repo: String, current: String) async -> String? {
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        URLSession.shared.dataTask(with: request) { data, _, _ in
-            guard
-                let data,
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let tag = json["tag_name"] as? String
-            else {
-                completion(nil) // オフラインや API エラーは黙って諦める(次回また確認する)
-                return
-            }
-            let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-            completion(isNewer(latest, than: current) ? latest : nil)
-        }.resume()
+        guard
+            let (data, _) = try? await URLSession.shared.data(for: request),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let tag = json["tag_name"] as? String
+        else {
+            return nil // オフラインや API エラーは黙って諦める(次回また確認する)
+        }
+        let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        return isNewer(latest, than: current) ? latest : nil
     }
 
     /// "0.2" > "0.1.1" のような数値バージョン比較

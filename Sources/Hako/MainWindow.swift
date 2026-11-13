@@ -2,16 +2,6 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// 取得・操作は AppDelegate が所有し、両方の UI に同じ結果を渡す。
-@MainActor @Observable
-final class MainWindowModel {
-    var snapshot: ColimaSnapshot?
-    var busyMessage: String?
-    var statsByID: [String: ContainerStats] = [:]
-    var diskUsage: [DiskUsage] = []
-    var colimaVersion: String?
-}
-
 enum MainWindowAction {
     enum ContainerOperation { case start, restart, stop, remove, logs, shell }
     enum ProjectOperation { case start, restart, stop, remove, editor }
@@ -58,7 +48,7 @@ private final class MainWindowState {
 }
 
 private struct MainWindowSidebar: View {
-    let model: MainWindowModel
+    let model: StatusStore
     let perform: (MainWindowAction) -> Void
     @Bindable var state: MainWindowState
 
@@ -106,7 +96,7 @@ private struct MainWindowSidebar: View {
 }
 
 private struct MainWindowView: View {
-    let model: MainWindowModel
+    let model: StatusStore
     let perform: (MainWindowAction) -> Void
     @Bindable var state: MainWindowState
 
@@ -186,7 +176,7 @@ private struct MainWindowView: View {
 }
 
 private struct MainWindowInspector: View {
-    let model: MainWindowModel
+    let model: StatusStore
     let perform: (MainWindowAction) -> Void
     @Bindable var state: MainWindowState
 
@@ -507,7 +497,7 @@ private final class MainContentWindow: NSWindow {
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let onClose: () -> Void
     private let viewState: MainWindowState
-    private let model: MainWindowModel
+    private let model: StatusStore
     private let perform: (MainWindowAction) -> Void
     private let toolbarController: MainWindowToolbarController
     private let splitController: NSSplitViewController
@@ -515,7 +505,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let sidebarItem: NSSplitViewItem
     private var inspectorObservation: NSKeyValueObservation?
 
-    init(model: MainWindowModel, perform: @escaping (MainWindowAction) -> Void, onClose: @escaping () -> Void) {
+    init(model: StatusStore, perform: @escaping (MainWindowAction) -> Void, onClose: @escaping () -> Void) {
         self.onClose = onClose
         self.model = model
         self.perform = perform

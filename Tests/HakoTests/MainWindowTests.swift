@@ -6,7 +6,7 @@ final class MainWindowTests: XCTestCase {
     @MainActor
     func testWindowStartsAtDefaultSizeWithoutSavedFrame() {
         withSavedWindowFrame(nil) {
-            let controller = MainWindowController(model: MainWindowModel(), perform: { _ in }, onClose: {})
+            let controller = MainWindowController(model: StatusStore(), perform: { _ in }, onClose: {})
             XCTAssertEqual(controller.window!.frame.size, NSSize(width: 1100, height: 700))
         }
     }
@@ -14,7 +14,7 @@ final class MainWindowTests: XCTestCase {
     @MainActor
     func testWindowRepairsUndersizedSavedFrame() {
         withSavedWindowFrame("200 500 570 84 0 0 1920 1250 ") {
-            let controller = MainWindowController(model: MainWindowModel(), perform: { _ in }, onClose: {})
+            let controller = MainWindowController(model: StatusStore(), perform: { _ in }, onClose: {})
             let window = controller.window!
             XCTAssertGreaterThanOrEqual(window.frame.width, window.minSize.width)
             XCTAssertGreaterThanOrEqual(window.frame.height, window.minSize.height)
@@ -24,7 +24,7 @@ final class MainWindowTests: XCTestCase {
     @MainActor
     func testWindowPreservesValidSavedSize() {
         withSavedWindowFrame("200 300 1000 650 0 0 1920 1250 ") {
-            let controller = MainWindowController(model: MainWindowModel(), perform: { _ in }, onClose: {})
+            let controller = MainWindowController(model: StatusStore(), perform: { _ in }, onClose: {})
             XCTAssertEqual(controller.window!.frame.size, NSSize(width: 1000, height: 650))
         }
     }
