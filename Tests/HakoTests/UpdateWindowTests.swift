@@ -19,7 +19,7 @@ final class UpdateWindowTests: XCTestCase {
             hakoAppPath: "/Applications/Hako.app", colimaVersion: { "0.11.0" },
             updater: HomebrewUpdater(brew: "/opt/homebrew/bin/brew", run: gated))
         let model = UpdateModel(backend: backend, store: StatusStore())
-        let controller = UpdateWindowController(model: model, restartColima: {}, colimaRunning: { false })
+        let controller = UpdateWindowController(model: model, relaunchHako: {}, restartColima: {}, colimaRunning: { false })
         await model.refresh()
         XCTAssertTrue(controller.allowsTermination)
 
@@ -41,7 +41,7 @@ final class UpdateWindowTests: XCTestCase {
             latestRelease: { _ in .init(version: "0.6", notes: "") }, hakoVersion: "0.6",
             hakoAppPath: "/Applications/Hako.app", colimaVersion: { "0.6" }, updater: nil)
         let model = UpdateModel(backend: backend, store: StatusStore())
-        let controller = UpdateWindowController(model: model, restartColima: {}, colimaRunning: { false })
+        let controller = UpdateWindowController(model: model, relaunchHako: {}, restartColima: {}, colimaRunning: { false })
         await model.refresh()
         let window = controller.window!
         window.contentView?.layoutSubtreeIfNeeded()

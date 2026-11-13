@@ -36,6 +36,11 @@ final class UpdateModel {
         var updater: HomebrewUpdater?
 
         static func live() -> Backend {
+            if let outcome = UpdatePreview.current {
+                return UpdatePreview.backend(outcome, colimaVersion: {
+                    await background(qos: .utility) { ColimaService.colimaVersion() }
+                })
+            }
             let bundle = Bundle.main.bundleURL
             return Backend(
                 latestRelease: { await UpdateChecker.latestRelease(repo: $0) },

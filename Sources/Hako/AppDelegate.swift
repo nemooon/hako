@@ -207,10 +207,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private func openUpdates() {
         if updateWindow == nil {
+            // プレビュー中は本物の再起動をせず、「Colima を再起動」も見えるように VM 実行中として扱う
+            let preview = UpdatePreview.current != nil
+            let appPath = Bundle.main.bundleURL.path
             updateWindow = UpdateWindowController(
                 model: UpdateModel(backend: .live(), store: store),
-                restartColima: { [weak self] in self?.commands.restartColima() },
-                colimaRunning: { [weak self] in self?.store.snapshot?.running == true }
+                relaunchHako: { if !preview { AppRelauncher.relaunch(appPath: appPath) } },
+                restartColima: { [weak self] in if !preview { self?.commands.restartColima() } },
+                colimaRunning: { [weak self] in preview || self?.store.snapshot?.running == true }
             )
         }
         updateWindow?.open()

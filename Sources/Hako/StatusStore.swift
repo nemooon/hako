@@ -14,8 +14,22 @@ final class StatusStore {
         var latestRelease: @Sendable (_ repo: String, _ current: String) async -> String?
         var run: @Sendable (_ arguments: [String]) async -> Shell.Result
         var notify: @MainActor (_ title: String, _ body: String) -> Void
+        /// 新しいバージョンと比べる Hako 自身のバージョン(swift run の素の実行ファイルでは nil)
+        var hakoVersion: String? = UpdateChecker.currentVersion
 
-        static let live = Backend(
+        /// HAKO_UPDATE_PREVIEW 付きで起動したときは、更新確認だけ見本の版を返す
+        static var live: Backend {
+            guard UpdatePreview.current != nil else { return real }
+            var backend = real
+            backend.hakoVersion = UpdatePreview.hakoVersion
+            backend.latestRelease = { repo, current in
+                guard let latest = UpdatePreview.release(for: repo)?.version else { return nil }
+                return UpdateChecker.isNewer(latest, than: current) ? latest : nil
+            }
+            return backend
+        }
+
+        private static let real = Backend(
             fetchSnapshot: { await background { ColimaService.fetchSnapshot() } },
             fetchStats: { await background { ColimaService.fetchStats() } },
             fetchDiskUsage: { await background { ColimaService.fetchDiskUsage() } },
@@ -104,7 +118,7 @@ final class StatusStore {
 
     /// Hako と colima の新しいバージョンが公開されていれば記録する
     func checkForUpdates() async {
-        if let current = UpdateChecker.currentVersion {
+        if let current = backend.hakoVersion {
             assign(\.availableUpdate, await backend.latestRelease("nemooon/hako", current))
         }
         // colima はまずローカルのバージョンを取ってから最新と比較する

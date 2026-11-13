@@ -158,7 +158,8 @@ private struct UpdateSection: View {
 final class UpdateWindowController: NSWindowController, NSWindowDelegate {
     private let model: UpdateModel
 
-    init(model: UpdateModel, restartColima: @escaping () -> Void, colimaRunning: @escaping () -> Bool) {
+    init(model: UpdateModel, relaunchHako: @escaping () -> Void,
+         restartColima: @escaping () -> Void, colimaRunning: @escaping () -> Bool) {
         self.model = model
         // 大きさは中身で決まるので、利用者によるリサイズはさせない
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
@@ -170,10 +171,12 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         super.init(window: window)
 
-        let appPath = Bundle.main.bundleURL.path
         let hosting = NSHostingController(rootView: UpdateView(
             model: model,
-            restartHako: { AppRelauncher.relaunch(appPath: appPath) },
+            restartHako: { [weak self] in
+                relaunchHako()
+                self?.window?.performClose(nil) // 再起動しなかった場合(プレビュー中)はウィンドウだけ閉じる
+            },
             restartColima: { [weak self] in
                 restartColima()
                 self?.window?.performClose(nil)

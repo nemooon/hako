@@ -137,6 +137,16 @@ final class StatusStoreTests: XCTestCase {
         XCTAssertEqual(fake.commands.count, 1)
     }
 
+    /// メニューバー側の更新確認は、Backend の Hako バージョンを使う(プレビューで差し替えられるように)
+    func testCheckForUpdatesUsesBackendHakoVersion() async {
+        var backend = FakeColima().backend()
+        backend.hakoVersion = "0.6"
+        backend.latestRelease = { repo, current in repo == "nemooon/hako" && current == "0.6" ? "0.7" : nil }
+        let store = StatusStore(backend: backend)
+        await store.checkForUpdates()
+        XCTAssertEqual(store.availableUpdate, "0.7")
+    }
+
     func testColimaStartAndStopDoNotNotify() {
         let stopped = ColimaSnapshot(profile: "default", running: false, vmInfo: nil, containers: [], composeProjects: [])
         XCTAssertTrue(StatusStore.notifications(from: snapshot([web(running: true)]), to: stopped).isEmpty)
