@@ -10,18 +10,33 @@ enum UpdateChecker {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
     }
 
-    /// repo("owner/name")の最新リリースが current より新しければ、そのバージョン文字列を返す(なければ nil)
-    static func newerRelease(repo: String, current: String) async -> String? {
-        var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+    /// GitHub リリースのバージョン("v" を除いたもの)と本文(Markdown)
+    struct Release: Equatable {
+        let version: String
+        let notes: String
+    }
+
+    /// releases/latest API の応答を読む。tag_name が無ければ nil
+    static func parseRelease(_ data: Data) -> Release? {
         guard
-            let (data, _) = try? await URLSession.shared.data(for: request),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let tag = json["tag_name"] as? String
-        else {
-            return nil // オフラインや API エラーは黙って諦める(次回また確認する)
-        }
-        let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        else { return nil }
+        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        return Release(version: version, notes: (json["body"] as? String) ?? "")
+    }
+
+    /// repo("owner/name")の最新リリース。オフラインや API エラーは nil(次回また確認する)
+    static func latestRelease(repo: String) async -> Release? {
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
+        return parseRelease(data)
+    }
+
+    /// repo の最新リリースが current より新しければ、そのバージョン文字列を返す(なければ nil)
+    static func newerRelease(repo: String, current: String) async -> String? {
+        guard let latest = await latestRelease(repo: repo)?.version else { return nil }
         return isNewer(latest, than: current) ? latest : nil
     }
 
