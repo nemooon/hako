@@ -151,3 +151,13 @@ final class UpdateModelTests: XCTestCase {
         XCTAssertFalse(model.isUpdating)
     }
 }
+
+final class UpdateItemTests: XCTestCase {
+    /// リリースページへのリンクは、今より新しい版があるときだけ出す
+    func testNewerLatestOnlyWhenActuallyNewer() {
+        XCTAssertEqual(UpdateItem(current: "0.6", latest: "0.7").newerLatest, "0.7")
+        XCTAssertNil(UpdateItem(current: "0.6", latest: "0.6").newerLatest)
+        XCTAssertNil(UpdateItem(current: "0.7", latest: "0.6").newerLatest)
+        XCTAssertNil(UpdateItem(current: nil, latest: "0.7").newerLatest)
+    }
+}

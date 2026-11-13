@@ -32,4 +32,21 @@ final class UpdateWindowTests: XCTestCase {
         await updating.value
         XCTAssertTrue(controller.allowsTermination)
     }
+
+    /// 中身が少ないときは、ウィンドウの高さも中身に合わせて小さくする(下半分が空白にならない)
+    func testWindowHeightFitsContent() async {
+        _ = NSApplication.shared
+        UserDefaults.standard.removeObject(forKey: "NSWindow Frame HakoUpdateWindow")
+        let backend = UpdateModel.Backend(
+            latestRelease: { _ in .init(version: "0.6", notes: "") }, hakoVersion: "0.6",
+            hakoAppPath: "/Applications/Hako.app", colimaVersion: { "0.6" }, updater: nil)
+        let model = UpdateModel(backend: backend, store: StatusStore())
+        let controller = UpdateWindowController(model: model, restartColima: {}, colimaRunning: { false })
+        await model.refresh()
+        let window = controller.window!
+        window.contentView?.layoutSubtreeIfNeeded()
+        for _ in 0..<50 { try? await Task.sleep(nanoseconds: 10_000_000); window.contentView?.layoutSubtreeIfNeeded() }
+        XCTAssertEqual(model.hako.phase, .upToDate)
+        XCTAssertLessThan(window.contentLayoutRect.height, 320)
+    }
 }

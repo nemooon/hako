@@ -9,9 +9,9 @@ private struct UpdateView: View {
     let colimaRunning: () -> Bool
     let close: () -> Void
 
+    // 外側はスクロールさせず、ウィンドウの高さを中身に合わせる(変更内容の欄だけ高さを抑えてスクロール)
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
                 UpdateSection(title: "Hako", item: model.hako, package: .hako, model: model,
                               releasesPage: UpdateChecker.hakoReleasesPageURL,
                               installedMessage: { "\($0) のインストールが完了しました。再起動すると切り替わります" },
@@ -29,11 +29,10 @@ private struct UpdateView: View {
                               restartTitle: "Colima を再起動",
                               restart: model.colima.phase == .installed && running ? restartColima : nil,
                               close: close)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minWidth: 560, minHeight: 360)
+        .padding(20)
+        .frame(width: 560, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -118,7 +117,7 @@ private struct UpdateSection: View {
         case .unavailable(let reason):
             VStack(alignment: .leading, spacing: 4) {
                 Label(reason, systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
-                if let latest = item.latest {
+                if let latest = item.newerLatest {
                     Link("リリースページで \(latest) を見る", destination: releasesPage).font(.caption)
                 }
             }
@@ -161,8 +160,9 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
 
     init(model: UpdateModel, restartColima: @escaping () -> Void, colimaRunning: @escaping () -> Bool) {
         self.model = model
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+        // 大きさは中身で決まるので、利用者によるリサイズはさせない
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 240),
+                              styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = "アップデート"
         window.toolbarStyle = .unifiedCompact
@@ -182,13 +182,16 @@ final class UpdateWindowController: NSWindowController, NSWindowDelegate {
             // close() は windowShouldClose を通らないので performClose で閉じる
             close: { [weak self] in self?.window?.performClose(nil) }
         ))
-        hosting.sizingOptions = []
+        // 状態が変わって中身の高さが変わったら、ウィンドウも追従させる
+        hosting.sizingOptions = [.preferredContentSize]
         window.contentViewController = hosting
-        window.setContentSize(NSSize(width: 640, height: 560))
-        window.minSize = NSSize(width: 560, height: 360)
-        // 初回は中央に置き、保存済みの位置とサイズがあればそれで上書きする
+        // 初回は中央に置き、保存済みの位置があればそれで上書きする。
+        // 大きさは保存値ではなく、今の中身に合わせ直す(上端は保つ)
         window.center()
         window.setFrameUsingName("HakoUpdateWindow")
+        let top = window.frame.maxY
+        window.setContentSize(hosting.view.fittingSize)
+        window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
         window.setFrameAutosaveName("HakoUpdateWindow")
         window.delegate = self
     }

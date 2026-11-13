@@ -17,6 +17,12 @@ struct UpdateItem: Equatable {
     var latest: String?
     var notes = ""
     var error: String?
+
+    /// latest が current より新しければ latest(どちらか不明なら nil)
+    var newerLatest: String? {
+        guard let latest, let current else { return nil }
+        return UpdateChecker.isNewer(latest, than: current) ? latest : nil
+    }
 }
 
 /// アップデートウィンドウの状態。確認と更新を行い、結果をメニューバー側(StatusStore)にも反映する
@@ -76,7 +82,7 @@ final class UpdateModel {
         hako = await check(.hako, current: backend.hakoVersion, release: hakoRelease,
                            notRunnable: backend.hakoAppPath == nil ? ".app として動いていないため、アップデートできません" : nil)
         if hakoRelease != nil {
-            store.recordHakoUpdate(hako.phase == .installed ? nil : newer(hako))
+            store.recordHakoUpdate(hako.phase == .installed ? nil : hako.newerLatest)
         }
 
         let current = await colimaCurrent
@@ -84,14 +90,8 @@ final class UpdateModel {
         colima = await check(.colima, current: current, release: colimaRelease,
                              notRunnable: current == nil ? "Colima が見つかりません" : nil)
         if colimaRelease != nil {
-            store.recordColimaUpdate(version: current, available: newer(colima))
+            store.recordColimaUpdate(version: current, available: colima.newerLatest)
         }
-    }
-
-    /// latest が current より新しければ latest(どちらか不明なら nil)
-    private func newer(_ item: UpdateItem) -> String? {
-        guard let latest = item.latest, let current = item.current else { return nil }
-        return UpdateChecker.isNewer(latest, than: current) ? latest : nil
     }
 
     /// 確認結果から欄の状態を決める。対象外の理由は spec の順(確認失敗 → 実行環境 → 最新 → Homebrew)で判定する
@@ -102,7 +102,7 @@ final class UpdateModel {
             item.phase = .unavailable("新しいバージョンを確認できませんでした")
         } else if let notRunnable {
             item.phase = .unavailable(notRunnable)
-        } else if newer(item) == nil {
+        } else if item.newerLatest == nil {
             item.phase = .upToDate
         } else if let updater = backend.updater, let latest = item.latest {
             // 新しい版がもう入っていて再起動待ちなら、更新ありではなく完了として出す
