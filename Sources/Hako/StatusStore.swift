@@ -217,8 +217,6 @@ extension ColimaSnapshot {
     var hasStoppedPublishedService: Bool {
         guard running else { return false }
         let groups = Dictionary(grouping: containers.filter { $0.composeProject != nil }, by: { $0.composeProject! })
-        return groups.values.contains { group in
-            group.contains(where: \.isRunning) && group.contains { !$0.isRunning && !$0.ports.isEmpty }
-        }
+        return groups.values.contains { Container.groupState($0) == .partial }
     }
 }

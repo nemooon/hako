@@ -202,16 +202,24 @@ private struct ProjectSidebarRow: View {
 
     private var runningCount: Int { containers.filter(\.isRunning).count }
     private var unhealthy: Bool { containers.contains { $0.isRunning && $0.isUnhealthy } }
+    // メニューバーと同じ判定。ポートを公開しない init 用などの停止は「一部停止」にしない
+    private var groupState: Container.GroupState { Container.groupState(containers) }
     private var status: String {
         if unhealthy { return "要確認" }
-        if runningCount == 0 { return "停止中" }
-        return runningCount == containers.count ? "実行中" : "一部停止"
+        switch groupState {
+        case .stopped: return "停止中"
+        case .partial: return "一部停止"
+        case .running: return "実行中"
+        }
     }
     private var color: Color {
         if selected { return .primary }
         if unhealthy { return .red }
-        if runningCount > 0 && runningCount < containers.count { return .orange }
-        return runningCount > 0 ? .green : .secondary
+        switch groupState {
+        case .stopped: return .secondary
+        case .partial: return .orange
+        case .running: return .green
+        }
     }
 
     var body: some View {

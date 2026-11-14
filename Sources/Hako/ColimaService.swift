@@ -53,6 +53,20 @@ struct Container: Equatable {
         return status // 時刻が取れなかったときは docker の表記のまま
     }
 
+    /// compose プロジェクトなど、コンテナのまとまりとしての状態
+    enum GroupState: Equatable {
+        case stopped  // 1 つも動いていない
+        case running  // 動いている(ポートを公開しない cli / init 用の停止は問題にしない)
+        case partial  // 動いているのに、ポートを公開するはずのコンテナが止まっている
+    }
+
+    /// メニューバーのアイコン・メニューの丸印・メインウィンドウのサイドバーで共通の判定。
+    /// ポートを公開しないコンテナ(バケット作成などの init 用、wp-cli など)は止まっていても数えない
+    static func groupState(_ group: [Container]) -> GroupState {
+        guard group.contains(where: \.isRunning) else { return .stopped }
+        return group.contains { !$0.isRunning && !$0.ports.isEmpty } ? .partial : .running
+    }
+
     /// 一覧の並び順: 起動中を先に、その中は名前順
     static func runningFirst(_ lhs: Container, _ rhs: Container) -> Bool {
         (lhs.isRunning ? 0 : 1, lhs.name) < (rhs.isRunning ? 0 : 1, rhs.name)

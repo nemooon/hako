@@ -390,12 +390,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         // 全停止ならグレー。稼働中でも、ポートを公開するはずのコンテナが止まっていればオレンジ
         // (ポートなしの exited は cli や init 用サービスとみなして問題扱いしない)
         let dotColor: NSColor
-        if runningCount == 0 {
-            dotColor = .systemGray
-        } else if group.contains(where: { !$0.isRunning && !$0.hostPorts.isEmpty }) {
-            dotColor = .systemOrange
-        } else {
-            dotColor = .systemGreen
+        switch Container.groupState(group) {
+        case .stopped: dotColor = .systemGray
+        case .partial: dotColor = .systemOrange
+        case .running: dotColor = .systemGreen
         }
         var entry = MenuEntry.info(project.name, subtitle: subtitleParts.joined(separator: " ・ "), dot: dotColor)
         entry.isEnabled = true
