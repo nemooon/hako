@@ -23,8 +23,11 @@ final class ColimaProfileTests: XCTestCase {
         {"name":"default","status":"Running","runtime":"docker"}
         {"name":"k8s","status":"Running","runtime":"containerd"}
         {"name":"old","status":"Stopped"}
+        {"name":"kube","status":"Running","runtime":"docker+k3s"}
+        {"name":"ck","status":"Running","runtime":"containerd+k3s"}
         """
-        XCTAssertEqual(ColimaService.parseProfiles(json).map(\.name), ["default", "old"])
+        // Kubernetes を有効にした docker プロファイル(docker+k3s)は docker context があるので残す
+        XCTAssertEqual(ColimaService.parseProfiles(json).map(\.name), ["default", "old", "kube"])
     }
 
     func testDockerContextName() {

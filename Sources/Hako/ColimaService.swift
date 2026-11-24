@@ -321,11 +321,13 @@ enum ColimaService {
     }
 
     /// `colima ls --json` の出力からプロファイル一覧を読む(Running 以外は停止中扱い)。
-    /// docker 以外のランタイム(containerd など)は docker context が作られず切り替えられないので外す
+    /// docker 以外のランタイム(containerd など)は docker context が作られず切り替えられないので外す。
+    /// Kubernetes を有効にすると "docker+k3s" のように後ろに付くので、"+" より前で判断する
     static func parseProfiles(_ json: String) -> [ColimaProfile] {
         jsonLines(json).compactMap { line in
             guard let name = line["name"] as? String else { return nil }
-            if let runtime = line["runtime"] as? String, !runtime.isEmpty, runtime.lowercased() != "docker" { return nil }
+            if let runtime = line["runtime"] as? String, !runtime.isEmpty,
+               runtime.split(separator: "+").first?.lowercased() != "docker" { return nil }
             return ColimaProfile(name: name, running: (line["status"] as? String)?.lowercased() == "running")
         }
     }
