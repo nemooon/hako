@@ -151,6 +151,8 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
             currentProfile = current
             profileItem.title = current ?? "プロファイル"
             profileItem.menu.removeAllItems()
+            // NSMenuToolbarItem はプルダウン式で先頭項目を表示しないので、空の見出しを先頭に置く
+            profileItem.menu.addItem(NSMenuItem(title: "", action: nil, keyEquivalent: ""))
             for profile in profiles {
                 let item = NSMenuItem(title: profile.name, action: #selector(selectProfile(_:)), keyEquivalent: "")
                 item.target = self

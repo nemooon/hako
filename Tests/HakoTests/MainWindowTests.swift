@@ -101,12 +101,15 @@ final class MainWindowTests: XCTestCase {
                                                      ColimaProfile(name: "work", running: false)]),
                           scope: .all, busy: false, search: "")
         XCTAssertEqual(controller.profileItem.title, "default")
-        XCTAssertEqual(controller.profileItem.menu.items.map(\.title), ["default", "work"])
-        XCTAssertEqual(controller.profileItem.menu.items.map(\.state), [.on, .off])
+        // NSMenuToolbarItem はプルダウン式で、メニューの先頭項目を表示しない。先頭は空の見出しにしておく
+        let items = controller.profileItem.menu.items
+        XCTAssertEqual(items.first?.title, "")
+        XCTAssertEqual(items.dropFirst().map(\.title), ["default", "work"])
+        XCTAssertEqual(items.dropFirst().map(\.state), [.on, .off])
         XCTAssertTrue(controller.profileItem.isEnabled)
         XCTAssertTrue(controller.toolbar.items.contains { $0.itemIdentifier == controller.profileItem.itemIdentifier })
 
-        let work = controller.profileItem.menu.items[1]
+        let work = controller.profileItem.menu.items[2]
         _ = (work.target as? NSObject)?.perform(work.action, with: work)
         guard case .switchProfile("work") = actions.last else {
             return XCTFail("work への切り替えが送られていない: \(actions)")
