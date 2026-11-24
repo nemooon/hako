@@ -1,36 +1,42 @@
 {
   "fill" : {
     "linear-gradient" : [
-      "extended-srgb:0.98000,0.72000,0.36000,1.00000",
-      "extended-srgb:0.85000,0.48000,0.16000,1.00000"
+      "extended-srgb:0.38824,0.77647,0.84706,1.00000",
+      "extended-srgb:0.11373,0.41569,0.54902,1.00000"
     ]
   },
   "groups" : [
     {
       "layers" : [
         {
-          "blend-mode" : "normal",
-          "fill" : "automatic",
+          "glass" : false,
+          "image-name" : "label.png",
+          "name" : "label"
+        },
+        {
           "glass" : true,
-          "hidden" : false,
-          "image-name" : "shippingbox.png",
-          "name" : "shippingbox"
+          "image-name" : "tape.png",
+          "name" : "tape"
+        },
+        {
+          "glass" : false,
+          "image-name" : "box.png",
+          "name" : "box"
         }
       ],
       "shadow" : {
         "kind" : "neutral",
-        "opacity" : 0.6
+        "opacity" : 0.5
       },
       "translucency" : {
-        "enabled" : true,
-        "value" : 0.2
+        "enabled" : false,
+        "value" : 0.5
       }
     }
   ],
   "supported-platforms" : {
-    "circles" : [
-      "watchOS"
-    ],
-    "squares" : "shared"
+    "squares" : [
+      "macOS"
+    ]
   }
 }
