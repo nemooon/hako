@@ -83,14 +83,17 @@ final class LogViewModel {
 
     func requestSearchFocus() { searchFocusRequest += 1 }
 
+    /// 一致箇所のハイライトと同じ比較方法で判定する(食い違うとハイライトの無い行が残る)
     func matches(_ line: String) -> Bool {
-        query.isEmpty || line.localizedCaseInsensitiveContains(query)
+        query.isEmpty || line.range(of: query, options: .caseInsensitive) != nil
     }
 
     private func append(_ batch: [String]) {
         lines += batch.map(Self.stripEscapeSequences)
-        // 1 行ごとに捨てると毎回描き直しになるので、上限の 2 割を超えたらまとめて捨てる
-        if lines.count > maxLines + maxLines / 5 {
+        // 1 行ごとに捨てると毎回描き直しになるので、上限の 2 割を超えたらまとめて捨てる。
+        // 過去の行を読んでいる間(追従オフ)は描き直しで表示位置が飛ぶので、上限の 5 倍までは捨てない
+        let limit = follows ? maxLines + maxLines / 5 : maxLines * 5
+        if lines.count > limit {
             lines.removeFirst(lines.count - maxLines)
             generation += 1
         }

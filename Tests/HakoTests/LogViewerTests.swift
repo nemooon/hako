@@ -27,6 +27,17 @@ final class LogStreamTests: XCTestCase {
         wait(for: [exited], timeout: 5)
     }
 
+    /// 止めた直後に参照を手放しても、出力の終わりまで処理して onExit が呼ばれる
+    /// (以前は解放後に EOF のハンドラを外せず、空読みが続いていた)
+    func testReleasingAfterStopStillFinishes() {
+        let exited = expectation(description: "終了する")
+        var stream: LogStream? = LogStream(arguments: ["/bin/sh", "-c", "while true; do echo tick; sleep 0.05; done"])
+        XCTAssertTrue(stream!.start(onLines: { _ in }, onExit: { _ in exited.fulfill() }))
+        stream?.stop()
+        stream = nil
+        wait(for: [exited], timeout: 5)
+    }
+
     /// 起動できないコマンドは false を返す
     func testStartFailsForMissingExecutable() {
         let stream = LogStream(executable: "/nonexistent/command", arguments: [])
@@ -81,6 +92,15 @@ final class LogViewModelTests: XCTestCase {
         XCTAssertLessThanOrEqual(model.lines.count, 12)
         XCTAssertEqual(model.lines.last, "30")
         XCTAssertGreaterThan(model.generation, 1)
+    }
+
+    /// 追従を止めて過去の行を読んでいる間は、表示位置が飛ばないよう上限の 5 倍まで捨てない
+    func testKeepsLinesWhileNotFollowing() async {
+        let model = model("sleep 0.2; seq 1 30", maxLines: 10)
+        model.start()
+        model.follows = false
+        await waitUntil { model.state == .ended }
+        XCTAssertEqual(model.lines.count, 30)
     }
 
     func testQueryMatchesCaseInsensitively() {

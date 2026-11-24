@@ -25,6 +25,13 @@ final class CommandCenter {
             store.refreshDiskUsage()
             return
         }
+        // ログは読むだけなので、再起動などの処理中でも開けるようにする(起動の様子を見たい場面が多い)
+        if case .container(let id, .logs) = action {
+            if let container = store.snapshot?.containers.first(where: { $0.id == id }) {
+                openLogs(container.name)
+            }
+            return
+        }
         guard !store.isBusy else { return }
         switch action {
         case .refresh: break

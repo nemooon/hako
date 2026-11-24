@@ -51,7 +51,8 @@ private struct LogView: View {
             case .ended:
                 Text("ログの終わりです(コンテナが停止しています)")
             case .failed(let status):
-                Text(status < 0 ? "docker を実行できませんでした" : "ログを取得できませんでした(終了コード \(status))")
+                // 127 は env がコマンドを見つけられなかったとき
+                Text(status < 0 || status == 127 ? "docker を実行できませんでした" : "ログを取得できませんでした(終了コード \(status))")
                     .foregroundStyle(.red)
             }
             Spacer()
@@ -88,7 +89,6 @@ private struct LogTextView: NSViewRepresentable {
         textView.font = Coordinator.font
         textView.setAccessibilityLabel("\(model.containerName) のログ")
         scrollView.hasHorizontalScroller = false
-        scrollView.contentView.postsBoundsChangedNotifications = true
         context.coordinator.attach(textView: textView, scrollView: scrollView)
         return scrollView
     }
@@ -115,9 +115,13 @@ private struct LogTextView: NSViewRepresentable {
         func attach(textView: NSTextView, scrollView: NSScrollView) {
             self.textView = textView
             self.scrollView = scrollView
+            // ウィンドウのリサイズやレイアウトの確定でも表示範囲は動くので、利用者のスクロールだけを見る
             NotificationCenter.default.addObserver(
                 self, selector: #selector(didScroll),
-                name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+                name: NSScrollView.didLiveScrollNotification, object: scrollView)
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(didScroll),
+                name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
         }
 
         /// 追記だけなら差分を足し、それ以外(消去・切り捨て・絞り込みの変更)は全体を描き直す

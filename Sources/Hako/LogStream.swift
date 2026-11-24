@@ -30,9 +30,10 @@ final class LogStream: @unchecked Sendable {
         let finished = DispatchGroup()
         finished.enter() // 出力の終わり
         finished.enter() // プロセスの終了
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        // self は強参照で持つ。弱参照だと、止めた直後に解放されたとき EOF でハンドラを外せず、
+        // 空読みが延々と続く(EOF でハンドラを外すので循環参照はそこで切れる)
+        pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard let self else { return }
             if data.isEmpty {
                 handle.readabilityHandler = nil
                 let rest = self.lock.withLock { () -> Data in
@@ -69,11 +70,14 @@ final class LogStream: @unchecked Sendable {
 
     /// pending から改行までの行を取り出す(lock を取ってから呼ぶ)
     private func takeCompleteLines() -> [String] {
+        // 行ごとに残りを複製すると行数の 2 乗の手間になるので、読んだ位置だけ進めて最後に一度だけ切り詰める
         var lines: [String] = []
-        while let newline = pending.firstIndex(of: 0x0A) {
-            lines.append(Self.decode(pending[pending.startIndex..<newline]))
-            pending = Data(pending[pending.index(after: newline)...])
+        var start = pending.startIndex
+        while let newline = pending[start...].firstIndex(of: 0x0A) {
+            lines.append(Self.decode(pending[start..<newline]))
+            start = pending.index(after: newline)
         }
+        if start != pending.startIndex { pending = Data(pending[start...]) }
         return lines
     }
 
