@@ -30,6 +30,15 @@ enum Shell {
         arguments.map { $0.contains(where: { " '\"$".contains($0) }) ? quote($0) : $0 }.joined(separator: " ")
     }
 
+    /// Homebrew の docker / colima が見つかるよう PATH を足した環境変数
+    static var environment: [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let extraPaths = ["/opt/homebrew/bin", "/usr/local/bin"]
+        let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PATH"] = (extraPaths + [currentPath]).joined(separator: ":")
+        return env
+    }
+
     /// シェルを介さず実行する(AppleScript などクォートが厄介なもの向け)
     @discardableResult
     static func runProgram(_ path: String, _ arguments: [String]) -> Result {
@@ -37,11 +46,7 @@ enum Shell {
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
 
-        var env = ProcessInfo.processInfo.environment
-        let extraPaths = ["/opt/homebrew/bin", "/usr/local/bin"]
-        let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        env["PATH"] = (extraPaths + [currentPath]).joined(separator: ":")
-        process.environment = env
+        process.environment = environment
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

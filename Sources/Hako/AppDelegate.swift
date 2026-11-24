@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var mainWindow: MainWindowController?
     private var cleanupWindow: CleanupWindowController?
     private var updateWindow: UpdateWindowController?
+    /// コンテナ名ごとのログウィンドウ(同じコンテナは同じウィンドウを前面に出す)
+    private var logWindows: [String: LogWindowController] = [:]
     private var refreshTimer: Timer?
     private var windowRefreshTimer: Timer?
     private var updateCheckTimer: Timer?
@@ -18,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationDidFinishLaunching(_ notification: Notification) {
         commands.openCleanup = { [weak self] in self?.openCleanup() }
         commands.openUpdates = { [weak self] in self?.openUpdates() }
+        commands.openLogs = { [weak self] name in self?.openLogs(container: name) }
         let statusMenu = StatusMenuController(store: store, commands: commands, editors: editors)
         statusMenu.openMainWindow = { [weak self] in self?.openMainWindow() }
         self.statusMenu = statusMenu
@@ -171,6 +174,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     @objc private func focusContainerSearch() {
+        // ログウィンドウでは、そのログの絞り込み欄へ移る
+        if let logWindow = logWindows.values.first(where: { $0.window?.isKeyWindow == true }) {
+            logWindow.focusSearch()
+            return
+        }
         openMainWindow()
         mainWindow?.focusSearch()
     }
@@ -224,6 +232,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             )
         }
         updateWindow?.open()
+    }
+
+    private func openLogs(container name: String) {
+        if let existing = logWindows[name] {
+            existing.open()
+            return
+        }
+        let model = LogViewModel(containerName: name) { LogStream.dockerLogs(container: name, tail: 1000) }
+        let controller = LogWindowController(
+            model: model,
+            cascadeFrom: logWindows.values.compactMap(\.window).first(where: \.isVisible),
+            openInTerminal: { [weak self] in self?.commands.openLogsInTerminal(container: name) },
+            onClose: { [weak self] in self?.logWindows[name] = nil }
+        )
+        logWindows[name] = controller
+        controller.open()
+        model.start()
     }
 
     private func openCleanup() {

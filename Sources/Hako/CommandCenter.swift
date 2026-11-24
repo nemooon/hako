@@ -9,6 +9,8 @@ final class CommandCenter {
     var openCleanup: () -> Void = {}
     /// アップデートウィンドウも同様
     var openUpdates: () -> Void = {}
+    /// ログウィンドウも同様(引数はコンテナ名)
+    var openLogs: (String) -> Void = { _ in }
 
     init(store: StatusStore, editors: EditorPreferences) {
         self.store = store
@@ -75,7 +77,7 @@ final class CommandCenter {
             ) else { return }
             execute("\(name) を破棄中…", ["docker", "rm", "-f", name])
         case .logs:
-            openInTerminal("docker logs -f --tail 200 \(Shell.quote(name))")
+            openLogs(name)
         case .shell:
             // bash があれば bash、なければ sh
             openInTerminal("docker exec -it \(Shell.quote(name)) /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'")
@@ -136,6 +138,11 @@ final class CommandCenter {
                 showError(command: "\(editor.name) で開く", detail: error.localizedDescription)
             }
         }
+    }
+
+    /// ログウィンドウの「ターミナルで開く」から呼ぶ
+    func openLogsInTerminal(container name: String) {
+        openInTerminal("docker logs -f --tail 200 \(Shell.quote(name))")
     }
 
     /// Terminal.app で新しいウインドウを開いてコマンドを実行する
