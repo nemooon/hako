@@ -30,6 +30,7 @@ final class CommandCenter {
         case .startColima: startColima()
         case .restartColima: restartColima()
         case .stopColima: stopColima()
+        case .switchProfile(let name): switchProfile(name)
         case .container(let id, let operation):
             guard let container = store.snapshot?.containers.first(where: { $0.id == id }) else { return }
             run(operation, container: container.name)
@@ -55,6 +56,21 @@ final class CommandCenter {
 
     func stopColima() {
         execute("Colima を停止中…", ["colima", "stop", "--profile", store.colimaProfile])
+    }
+
+    /// 操作対象のプロファイルを切り替える。docker context ごと切り替えるので、ターミナルの docker も同じ VM を向く。
+    /// 実行中なら context を切り替えるだけ、停止中なら起動する(colima start が context も切り替える)
+    func switchProfile(_ name: String) {
+        guard !store.isBusy,
+              let snapshot = store.snapshot,
+              let profile = snapshot.profiles.first(where: { $0.name == name }),
+              !(snapshot.isColimaContext && name == snapshot.profile)
+        else { return }
+        if profile.running {
+            execute("プロファイル \(name) に切り替え中…", ["docker", "context", "use", profile.dockerContext])
+        } else {
+            execute("プロファイル \(name) を起動中…", ["colima", "start", "--profile", name])
+        }
     }
 
     // MARK: - コンテナ / compose

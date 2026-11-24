@@ -6,6 +6,7 @@ enum MainWindowAction {
     enum ContainerOperation { case start, restart, stop, remove, logs, shell }
     enum ProjectOperation { case start, restart, stop, remove, editor }
     case refresh, cleanup, startColima, restartColima, stopColima
+    case switchProfile(String)
     case container(String, ContainerOperation)
     case project(String, ProjectOperation)
 }
