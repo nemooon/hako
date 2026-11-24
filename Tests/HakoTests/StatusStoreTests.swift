@@ -71,6 +71,51 @@ final class StatusStoreTests: XCTestCase {
         XCTAssertEqual(store.snapshot?.containers.map(\.id), ["web"])
     }
 
+    /// プロファイルが変わったら、前の VM のディスク使用量を捨てて取り直す(実行中のまま切り替わっても残さない)
+    func testProfileChangeReloadsDiskUsage() async {
+        let fake = FakeColima()
+        var backend = fake.backend()
+        let usage = DiskUsageSource()
+        backend.fetchDiskUsage = { await usage.current() }
+        let store = StatusStore(backend: backend)
+
+        store.refresh()
+        fake.feed(ColimaSnapshot(profile: "default", running: true, vmInfo: nil, containers: [], composeProjects: []))
+        await waitUntil { store.snapshot != nil }
+        store.refreshDiskUsage()
+        await waitUntil { store.diskUsage.first?.size == "22.6GB" }
+
+        await usage.set("0B")
+        store.refresh()
+        fake.feed(ColimaSnapshot(profile: "work", running: true, vmInfo: nil, containers: [], composeProjects: []))
+        await waitUntil { store.snapshot?.profile == "work" }
+        await waitUntil { store.diskUsage.first?.size == "0B" }
+    }
+
+    /// 切り替えの時点で前の VM のディスク使用量を取得中でも、その結果を新しい VM の値として出さない
+    func testProfileChangeDiscardsInFlightDiskUsage() async {
+        let fake = FakeColima()
+        var backend = fake.backend()
+        let usage = SlowFirstDiskUsage()
+        backend.fetchDiskUsage = { await usage.next() }
+        let store = StatusStore(backend: backend)
+
+        store.refresh()
+        fake.feed(ColimaSnapshot(profile: "default", running: true, vmInfo: nil, containers: [], composeProjects: []))
+        await waitUntil { store.snapshot != nil }
+        store.refreshDiskUsage()
+        await waitUntil { usage.isWaitingSync }
+
+        // ターミナルで docker context use したのと同じ(Hako の操作を経ない切り替え)
+        store.refresh()
+        fake.feed(ColimaSnapshot(profile: "work", running: true, vmInfo: nil, containers: [], composeProjects: []))
+        await waitUntil { store.snapshot?.profile == "work" }
+        await usage.releaseFirst()
+        await waitUntil { store.diskUsage.first?.size == "0B" }
+        for _ in 0..<20 { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertEqual(store.diskUsage.first?.size, "0B")
+    }
+
     /// 操作前に始まった取得の結果で、操作後の状態を上書きしない
     func testSnapshotStartedBeforeOperationIsDiscarded() async {
         let fake = FakeColima()
@@ -188,5 +233,36 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertTrue(editors.reload())
         XCTAssertEqual(editors.selected.name, "Zed")
         XCTAssertFalse(editors.reload()) // 変化が無ければ false
+    }
+}
+
+/// 今の VM のディスク使用量を返す偽物(テストから切り替える)
+private actor DiskUsageSource {
+    private var size = "22.6GB"
+    func set(_ size: String) { self.size = size }
+    func current() -> [DiskUsage] { [DiskUsage(type: "Images", size: size, reclaimable: "0B (0%)")] }
+}
+
+/// 1 回目の取得だけテストが離すまで止まる(前の VM の値 22.6GB)。2 回目以降は新しい VM の値 0B
+private final class SlowFirstDiskUsage: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private var first: CheckedContinuation<Void, Never>?
+    private var waiting = false
+
+    var isWaitingSync: Bool { lock.withLock { waiting } }
+
+    func next() async -> [DiskUsage] {
+        let call = lock.withLock { calls += 1; return calls }
+        if call == 1 {
+            await withCheckedContinuation { c in lock.withLock { first = c; waiting = true } }
+            return [DiskUsage(type: "Images", size: "22.6GB", reclaimable: "0B (0%)")]
+        }
+        return [DiskUsage(type: "Images", size: "0B", reclaimable: "0B (0%)")]
+    }
+
+    func releaseFirst() async {
+        let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in waiting = false; defer { first = nil }; return first }
+        c?.resume()
     }
 }

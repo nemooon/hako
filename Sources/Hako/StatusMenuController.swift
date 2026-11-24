@@ -270,8 +270,22 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .action("起動", #selector(startColima), icon: "play.fill", enabled: !running),
             .action("再起動", #selector(restartColima), icon: "arrow.clockwise", enabled: running),
             .action("停止", #selector(stopColima), icon: "stop.fill", enabled: running),
-        ]
+        ] + Self.profileEntries(for: snapshot)
         return entry
+    }
+
+    /// Colima サブメニュー末尾のプロファイル一覧。選ぶとそのプロファイルに切り替える。
+    /// プロファイルが 1 つ以下なら何も出さない(default だけの人には今と同じ見た目)
+    static func profileEntries(for snapshot: ColimaSnapshot) -> [MenuEntry] {
+        guard snapshot.profiles.count > 1 else { return [] }
+        var entries: [MenuEntry] = [.separator, .info("プロファイル")]
+        for profile in snapshot.profiles {
+            var item = MenuEntry.action(profile.name, #selector(selectProfile(_:)), represented: profile.name)
+            item.subtitle = profile.running ? "実行中" : "停止中"
+            item.isChecked = snapshot.isColimaContext && profile.name == snapshot.profile
+            entries.append(item)
+        }
+        return entries
     }
 
     /// compose プロジェクト(稼働中・停止中とも)と単体コンテナを 1 つのリストで表示する
@@ -548,6 +562,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func runProjectCommand(_ sender: NSMenuItem) {
         guard let command = sender.representedObject as? ProjectCommand else { return }
         commands.run(command.operation, project: command.project)
+    }
+
+    @objc private func selectProfile(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        commands.switchProfile(name)
     }
 
     @objc private func selectEditor(_ sender: NSMenuItem) {

@@ -80,4 +80,68 @@ final class MainWindowTests: XCTestCase {
         XCTAssertTrue(ContainerScope.standalone.containers(in: snapshot, matching: "shop").isEmpty)
         XCTAssertTrue(ContainerScope.all.containers(in: nil, matching: "").isEmpty)
     }
+
+    // MARK: - プロファイル選択
+
+    @MainActor
+    private func profileSnapshot(_ profiles: [ColimaProfile], running: Bool = true) -> ColimaSnapshot {
+        ColimaSnapshot(profile: "default", running: running, vmInfo: nil, containers: [], composeProjects: [],
+                       profiles: profiles)
+    }
+
+    @MainActor
+    func testToolbarProfileMenuReflectsProfiles() {
+        _ = NSApplication.shared
+        var actions: [MainWindowAction] = []
+        let controller = MainWindowToolbarController(perform: { actions.append($0) },
+                                                     toggleSidebar: {}, toggleInspector: {}, searchChanged: { _ in })
+        let window = NSWindow()
+        window.toolbar = controller.toolbar // ツールバーは window に付けたときに既定の項目が並ぶ
+        controller.update(snapshot: profileSnapshot([ColimaProfile(name: "default", running: true),
+                                                     ColimaProfile(name: "work", running: false)]),
+                          scope: .all, busy: false, search: "")
+        XCTAssertEqual(controller.profileItem.title, "default")
+        // NSMenuToolbarItem はプルダウン式で、メニューの先頭項目を表示しない。先頭は空の見出しにしておく
+        let items = controller.profileItem.menu.items
+        XCTAssertEqual(items.first?.title, "")
+        XCTAssertEqual(items.dropFirst().map(\.title), ["default", "work"])
+        XCTAssertEqual(items.dropFirst().map(\.state), [.on, .off])
+        XCTAssertTrue(controller.profileItem.isEnabled)
+        XCTAssertTrue(controller.toolbar.items.contains { $0.itemIdentifier == controller.profileItem.itemIdentifier })
+
+        let work = controller.profileItem.menu.items[2]
+        _ = (work.target as? NSObject)?.perform(work.action, with: work)
+        guard case .switchProfile("work") = actions.last else {
+            return XCTFail("work への切り替えが送られていない: \(actions)")
+        }
+    }
+
+    /// default だけのときはツールバーにプロファイル選択を出さない
+    @MainActor
+    func testToolbarHidesProfileMenuForSingleProfile() {
+        _ = NSApplication.shared
+        let controller = MainWindowToolbarController(perform: { _ in },
+                                                     toggleSidebar: {}, toggleInspector: {}, searchChanged: { _ in })
+        let window = NSWindow()
+        window.toolbar = controller.toolbar // ツールバーは window に付けたときに既定の項目が並ぶ
+        controller.update(snapshot: profileSnapshot([ColimaProfile(name: "default", running: true),
+                                                     ColimaProfile(name: "work", running: true)]),
+                          scope: .all, busy: false, search: "")
+        controller.update(snapshot: profileSnapshot([ColimaProfile(name: "default", running: true)]),
+                          scope: .all, busy: false, search: "")
+        XCTAssertFalse(controller.toolbar.items.contains { $0.itemIdentifier == controller.profileItem.itemIdentifier })
+    }
+
+    @MainActor
+    func testToolbarProfileMenuDisabledWhileBusy() {
+        _ = NSApplication.shared
+        let controller = MainWindowToolbarController(perform: { _ in },
+                                                     toggleSidebar: {}, toggleInspector: {}, searchChanged: { _ in })
+        let window = NSWindow()
+        window.toolbar = controller.toolbar // ツールバーは window に付けたときに既定の項目が並ぶ
+        controller.update(snapshot: profileSnapshot([ColimaProfile(name: "default", running: true),
+                                                     ColimaProfile(name: "work", running: true)]),
+                          scope: .all, busy: true, search: "")
+        XCTAssertFalse(controller.profileItem.isEnabled)
+    }
 }

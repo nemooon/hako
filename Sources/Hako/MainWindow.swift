@@ -6,6 +6,7 @@ enum MainWindowAction {
     enum ContainerOperation { case start, restart, stop, remove, logs, shell }
     enum ProjectOperation { case start, restart, stop, remove, editor }
     case refresh, cleanup, startColima, restartColima, stopColima
+    case switchProfile(String)
     case container(String, ContainerOperation)
     case project(String, ProjectOperation)
 }
@@ -157,6 +158,25 @@ private struct MainWindowView: View {
                 }
                 Button("Colima を起動") { perform(.startColima) }
                     .disabled(model.busyMessage != nil)
+                // 停止中はツールバーが隠れるので、プロファイルはここで選べるようにする
+                if let snapshot = model.snapshot, snapshot.profiles.count > 1 {
+                    Menu("プロファイル: \(snapshot.isColimaContext ? snapshot.profile : "未選択")") {
+                        ForEach(snapshot.profiles, id: \.name) { profile in
+                            Button {
+                                perform(.switchProfile(profile.name))
+                            } label: {
+                                let title = "\(profile.name)（\(profile.running ? "実行中" : "停止中")）"
+                                if snapshot.isColimaContext && profile.name == snapshot.profile {
+                                    Label(title, systemImage: "checkmark")
+                                } else {
+                                    Text(title)
+                                }
+                            }
+                        }
+                    }
+                    .fixedSize()
+                    .disabled(model.busyMessage != nil)
+                }
             }
         } else {
             VStack(spacing: 0) {
