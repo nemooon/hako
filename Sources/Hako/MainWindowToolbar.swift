@@ -11,6 +11,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         static let inspector = NSToolbarItem.Identifier("hako.inspector")
         static let projectActions = NSToolbarItem.Identifier("hako.projectActions")
         static let search = NSToolbarItem.Identifier("hako.search")
+        static let profile = NSToolbarItem.Identifier("hako.profile")
     }
 
     private let perform: (MainWindowAction) -> Void
@@ -24,6 +25,10 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     private var canStop = false
     private var items: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     private let searchItem = NSSearchToolbarItem(itemIdentifier: ID.search)
+    /// 操作対象の Colima プロファイルを選ぶポップアップ(プロファイルが 2 つ以上のときだけツールバーに出す)
+    let profileItem = NSMenuToolbarItem(itemIdentifier: ID.profile)
+    private var profiles: [ColimaProfile] = []
+    private var currentProfile: String?
 
     lazy var toolbar: NSToolbar = {
         let toolbar = NSToolbar(identifier: "HakoMainWindowToolbar")
@@ -49,6 +54,11 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         searchItem.label = "検索"
         searchItem.preferredWidthForSearchField = 220
         field.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
+        profileItem.label = "プロファイル"
+        profileItem.toolTip = "操作する Colima のプロファイル(ターミナルの docker の接続先も切り替わります)"
+        profileItem.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "プロファイル")
+        profileItem.showsIndicator = true
+        profileItem.autovalidates = false
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -57,12 +67,13 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [ID.commands, ID.projectActions]
+        toolbarDefaultItemIdentifiers(toolbar) + [ID.commands, ID.projectActions, ID.profile]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         if id == ID.search { return searchItem }
+        if id == ID.profile { return profileItem }
         if let item = items[id] { return item }
         let item: NSToolbarItem
         switch id {
@@ -126,8 +137,37 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
         canStart = project != nil ? running && (containers.isEmpty || count < containers.count) : !running
         canStop = project != nil ? count > 0 : running
         if searchItem.searchField.stringValue != search { searchItem.searchField.stringValue = search }
+        updateProfiles(snapshot)
         updateCommandsVisibility()
         applyState()
+    }
+
+    /// プロファイルの一覧とチェックを描き直し、2 つ以上あるときだけツールバーに出す
+    private func updateProfiles(_ snapshot: ColimaSnapshot?) {
+        let profiles = snapshot?.profiles ?? []
+        let current = snapshot?.isColimaContext == true ? snapshot?.profile : nil
+        if profiles != self.profiles || current != currentProfile {
+            self.profiles = profiles
+            currentProfile = current
+            profileItem.title = current ?? "プロファイル"
+            profileItem.menu.removeAllItems()
+            for profile in profiles {
+                let item = NSMenuItem(title: profile.name, action: #selector(selectProfile(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = profile.name
+                item.subtitle = profile.running ? "実行中" : "停止中"
+                item.state = profile.name == current ? .on : .off
+                profileItem.menu.addItem(item)
+            }
+        }
+
+        let index = toolbar.items.firstIndex { $0.itemIdentifier == ID.profile }
+        if profiles.count > 1, index == nil,
+           let separator = toolbar.items.firstIndex(where: { $0.itemIdentifier == .sidebarTrackingSeparator }) {
+            toolbar.insertItem(withItemIdentifier: ID.profile, at: separator + 1)
+        } else if profiles.count <= 1, let index {
+            toolbar.removeItem(at: index)
+        }
     }
 
     private func updateCommandsVisibility() {
@@ -148,6 +188,7 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     }
 
     private func applyState() {
+        profileItem.isEnabled = !busy
         items[ID.cleanup]?.isEnabled = running && !busy
         items[ID.sidebar]?.isEnabled = running
         items[ID.inspector]?.isEnabled = running
@@ -199,6 +240,10 @@ final class MainWindowToolbarController: NSObject, NSToolbarDelegate, NSSearchFi
     @objc private func start() { guard running && canStart && !busy else { return }; perform(project.map { .project($0.name, .start) } ?? .startColima) }
     @objc private func stop() { guard canStop && !busy else { return }; perform(project.map { .project($0.name, .stop) } ?? .stopColima) }
     @objc private func restart() { guard canStop && !busy else { return }; perform(project.map { .project($0.name, .restart) } ?? .restartColima) }
+    @objc private func selectProfile(_ sender: NSMenuItem) {
+        guard !busy, let name = sender.representedObject as? String else { return }
+        perform(.switchProfile(name))
+    }
     @objc private func openEditor() { if let project, !busy { perform(.project(project.name, .editor)) } }
     @objc private func removeProject() { if let project, !busy { perform(.project(project.name, .remove)) } }
 }
