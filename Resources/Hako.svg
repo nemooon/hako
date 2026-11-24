@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Hako アプリアイコンの箱。scripts/icon-layers.sh で Resources/Hako.icon のレイヤーに書き出す -->
+  <!-- 背景・影・つやは Icon Composer (Hako.icon/icon.json) 側で付ける -->
+  <defs>
+    <linearGradient id="top" x1="0" y1="256" x2="0" y2="541" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F6D3A0"/>
+      <stop offset="1" stop-color="#EBBE84"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="399" x2="0" y2="804" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DDA563"/>
+      <stop offset="1" stop-color="#C98E4E"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="399" x2="0" y2="804" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BB8143"/>
+      <stop offset="1" stop-color="#A26B33"/>
+    </linearGradient>
+  </defs>
+
+
+  <g transform="matrix(1.2427 0 0 1.2427 -124.27 -124.27)">
+  <g id="box" stroke-linejoin="round">
+    <polygon points="265.2,661.1 512.0,803.6 512.0,541.4 265.2,398.9" fill="url(#left)"/>
+    <polygon points="758.8,661.1 512.0,803.6 512.0,541.4 758.8,398.9" fill="url(#right)"/>
+    <polygon points="512.0,256.4 758.8,398.9 512.0,541.4 265.2,398.9" fill="url(#top)"/>
+    <!-- フラップの継ぎ目 -->
+    <line x1="393.5" y1="330.5" x2="635.4" y2="470.2" stroke="#9C6A35" stroke-width="6" stroke-linecap="round"/>
+    <!-- 面の境目 -->
+    <line x1="265.2" y1="398.9" x2="512.0" y2="541.4" stroke="#FBE2BB" stroke-width="4" stroke-linecap="round"/>
+    <line x1="512.0" y1="541.4" x2="758.8" y2="398.9" stroke="#F3D3A3" stroke-width="4" stroke-linecap="round"/>
+    <line x1="512.0" y1="541.4" x2="512.0" y2="803.6" stroke="#B07639" stroke-width="3" stroke-linecap="round"/>
+    <polygon points="265.2,661.1 512.0,803.6 758.8,661.1 758.8,398.9 512.0,256.4 265.2,398.9" fill="none" stroke="#7E5226" stroke-opacity="0.55" stroke-width="4"/>
+  </g>
+
+  <g id="tape">
+    <polygon points="409.6,315.5 656.4,458.0 614.4,482.3 367.6,339.8" fill="#FFF3DA" fill-opacity="0.55"/>
+    <polygon points="656.4,458.0 614.4,482.3 614.4,613.4 656.4,589.1" fill="#FFF3DA" fill-opacity="0.38"/>
+    <polygon points="409.6,315.5 656.4,458.0 647.7,463.0 400.9,320.5" fill="#FFFFFF" fill-opacity="0.45"/>
+    <line x1="656.4" y1="589.1" x2="614.4" y2="613.4" stroke="#FFF3DA" stroke-opacity="0.6" stroke-width="3"/>
+  </g>
+
+  <g id="label">
+    <polygon points="297.3,631.2 400.9,691.0 400.9,605.5 297.3,545.7" fill="#FBF7EE"/>
+    <line x1="314.5" y1="581.3" x2="383.7" y2="621.2" stroke="#B6A58A" stroke-width="11" stroke-linecap="round"/>
+    <line x1="314.5" y1="612.6" x2="363.9" y2="641.1" stroke="#B6A58A" stroke-width="11" stroke-linecap="round"/>
+  </g>
+
+  </g>
+</svg>
