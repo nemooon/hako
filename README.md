@@ -99,6 +99,8 @@ Apple Developer ID 署名なしのため、macOS が quarantine 属性を付け�
 ## ソースから実行
 
 ビルドには macOS 27 SDK を含む Xcode 27 / Command Line Tools が必要です。
+`.app` にまとめる `scripts/bundle.sh` は、アイコン (`Resources/Hako.icon`) を
+actool でコンパイルするため Xcode 27 本体が必要です（Command Line Tools には含まれません）。
 実行環境は引き続き macOS 14.4 以降に対応しています。
 
 ```sh

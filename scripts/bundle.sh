@@ -9,6 +9,12 @@ BUNDLE_ID="com.nemooon.hako"
 VERSION="0.7"
 DIST="dist/${APP_NAME}.app"
 
+# アイコンのコンパイルに使う actool は Xcode 本体にしか含まれない
+xcrun -f actool >/dev/null 2>&1 || {
+    echo "actool が見つかりません。Xcode をインストールし、xcode-select で選択してください" >&2
+    exit 1
+}
+
 # SwiftBuild がリンク時の SDK を deployment target として記録する環境を回避する。
 # Liquid Glass の自動適用には、実際に使用した SDK の記録が必要。
 swift build --build-system native -c release
