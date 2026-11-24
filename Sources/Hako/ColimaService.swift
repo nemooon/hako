@@ -113,6 +113,19 @@ struct ColimaSnapshot: Equatable {
     let vmInfo: String?      // 例: "CPU 2 ・ メモリ 12GB ・ ディスク 100GB"
     let containers: [Container]
     let composeProjects: [ComposeProject]
+    /// `colima ls` に出るすべてのプロファイル(取得できなければ空)
+    var profiles: [ColimaProfile] = []
+    /// docker の現在の context が colima のものか(Docker Desktop などなら false)
+    var isColimaContext = true
+}
+
+/// Colima のプロファイル(VM 1 台ごとの名前)と、その実行状態
+struct ColimaProfile: Equatable {
+    let name: String
+    let running: Bool
+
+    /// このプロファイル用に colima が作る docker context 名
+    var dockerContext: String { name == "default" ? "colima" : "colima-\(name)" }
 }
 
 struct ContainerStats: Equatable {
@@ -166,10 +179,15 @@ struct DiskUsage: Equatable {
 enum ColimaService {
     /// Colima の状態と起動中コンテナをまとめて取得する(バックグラウンドキューで呼ぶこと)
     static func fetchSnapshot() -> ColimaSnapshot {
-        let profile = currentProfile()
-        let status = colimaStatus(profile: profile)
+        let contextProfile = profile(forContext: currentDockerContext())
+        let profile = contextProfile ?? "default"
+        let listResult = Shell.exec(["colima", "ls", "--json"])
+        let listing = listResult.status == 0 ? listResult.stdout : ""
+        let profiles = parseProfiles(listing)
+        let status = colimaStatus(profile: profile, listing: listing)
         guard status.running else {
-            return ColimaSnapshot(profile: profile, running: false, vmInfo: nil, containers: [], composeProjects: [])
+            return ColimaSnapshot(profile: profile, running: false, vmInfo: nil, containers: [], composeProjects: [],
+                                  profiles: profiles, isColimaContext: contextProfile != nil)
         }
         // コンテナ一覧(ps → inspect)と compose 一覧は互いに依存しないので同時に取る
         var containers: [Container] = []
@@ -185,7 +203,9 @@ enum ColimaService {
             running: true,
             vmInfo: status.vmInfo,
             containers: containers,
-            composeProjects: composeProjects
+            composeProjects: composeProjects,
+            profiles: profiles,
+            isColimaContext: contextProfile != nil
         )
         // HAKO_DEMO=1 で起動すると、スクリーンショット用に名前を架空のものへ置き換える
         if ProcessInfo.processInfo.environment["HAKO_DEMO"] != nil {
@@ -252,7 +272,9 @@ enum ColimaService {
             },
             composeProjects: snapshot.composeProjects.map {
                 ComposeProject(name: mapping[$0.name] ?? $0.name, status: $0.status, configFiles: $0.configFiles)
-            }
+            },
+            profiles: snapshot.profiles,
+            isColimaContext: snapshot.isColimaContext
         )
     }
 
@@ -267,20 +289,32 @@ enum ColimaService {
         return nil
     }
 
-    /// docker の現在の context に対応する colima プロファイル名。
-    /// "colima" → "default"、"colima-work" → "work"。colima 以外の context なら "default"
-    private static func currentProfile() -> String {
-        let result = Shell.exec(["docker", "context", "show"])
-        let context = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard result.status == 0, context.hasPrefix("colima") else { return "default" }
-        return context == "colima" ? "default" : String(context.dropFirst("colima-".count))
+    /// docker context 名に対応する colima プロファイル名。
+    /// "colima" → "default"、"colima-work" → "work"。colima 以外の context なら nil
+    static func profile(forContext context: String) -> String? {
+        if context == "colima" { return "default" }
+        guard context.hasPrefix("colima-"), context.count > "colima-".count else { return nil }
+        return String(context.dropFirst("colima-".count))
     }
 
-    private static func colimaStatus(profile: String) -> (running: Bool, vmInfo: String?) {
-        // `colima ls --json` はプロファイルごとに 1 行の JSON を返す
-        let result = Shell.exec(["colima", "ls", "--json"])
-        guard result.status == 0,
-              let json = jsonLines(result.stdout).first(where: { $0["name"] as? String == profile }),
+    /// docker の現在の context 名(取得できなければ空文字)
+    private static func currentDockerContext() -> String {
+        let result = Shell.exec(["docker", "context", "show"])
+        guard result.status == 0 else { return "" }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// `colima ls --json` の出力からプロファイル一覧を読む(Running 以外は停止中扱い)
+    static func parseProfiles(_ json: String) -> [ColimaProfile] {
+        jsonLines(json).compactMap { line in
+            guard let name = line["name"] as? String else { return nil }
+            return ColimaProfile(name: name, running: (line["status"] as? String)?.lowercased() == "running")
+        }
+    }
+
+    /// `colima ls --json`(プロファイルごとに 1 行の JSON)の出力から、指定プロファイルの状態を読む
+    private static func colimaStatus(profile: String, listing: String) -> (running: Bool, vmInfo: String?) {
+        guard let json = jsonLines(listing).first(where: { $0["name"] as? String == profile }),
               (json["status"] as? String)?.lowercased() == "running"
         else { return (false, nil) }
 
