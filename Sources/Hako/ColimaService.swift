@@ -231,7 +231,7 @@ enum ColimaService {
 
     /// compose のプロジェクト名・サービス名と、それらを含むコンテナ名・イメージ名を
     /// 架空のものに置き換える(サービス名はありふれたものだけ残す)
-    private static func anonymize(_ snapshot: ColimaSnapshot) -> ColimaSnapshot {
+    static func anonymize(_ snapshot: ColimaSnapshot) -> ColimaSnapshot {
         let realNames = snapshot.composeProjects.map(\.name) + snapshot.containers.compactMap(\.composeProject)
         var mapping: [String: String] = [:]
         for (index, name) in Array(Set(realNames)).sorted().enumerated() {
@@ -252,10 +252,23 @@ enum ColimaService {
             orderedMapping.reduce(text) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
         }
 
+        // プロファイル名も案件名などを含みうるので、default 以外は profile-1, profile-2… にする
+        var profileMapping: [String: String] = [:]
+        for name in snapshot.profiles.map(\.name) where name != "default" && profileMapping[name] == nil {
+            profileMapping[name] = "profile-\(profileMapping.count + 1)"
+        }
+        if snapshot.profile != "default", profileMapping[snapshot.profile] == nil {
+            profileMapping[snapshot.profile] = "profile-\(profileMapping.count + 1)"
+        }
+        let vmInfo = snapshot.vmInfo.map { info in
+            profileMapping.sorted { $0.key.count > $1.key.count }
+                .reduce(info) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
+        }
+
         return ColimaSnapshot(
-            profile: snapshot.profile,
+            profile: profileMapping[snapshot.profile] ?? snapshot.profile,
             running: snapshot.running,
-            vmInfo: snapshot.vmInfo,
+            vmInfo: vmInfo,
             containers: snapshot.containers.map { c in
                 Container(
                     id: c.id,
@@ -273,7 +286,7 @@ enum ColimaService {
             composeProjects: snapshot.composeProjects.map {
                 ComposeProject(name: mapping[$0.name] ?? $0.name, status: $0.status, configFiles: $0.configFiles)
             },
-            profiles: snapshot.profiles,
+            profiles: snapshot.profiles.map { ColimaProfile(name: profileMapping[$0.name] ?? $0.name, running: $0.running) },
             isColimaContext: snapshot.isColimaContext
         )
     }

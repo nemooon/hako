@@ -149,10 +149,15 @@ final class StatusStore {
                 backend.notify(title, body)
             }
         }
+        let switchedVM = self.snapshot.map { $0.profile != snapshot.profile || $0.isColimaContext != snapshot.isColimaContext } ?? false
         self.snapshot = snapshot
         if !snapshot.running {
             assign(\.statsByID, [:])
             assign(\.diskUsage, [])
+        } else if switchedVM {
+            // 別の VM を見るようになったので、前の VM の使用量を残さず取り直す
+            assign(\.statsByID, [:])
+            reloadDiskUsage()
         }
     }
 

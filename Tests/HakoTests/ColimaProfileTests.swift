@@ -29,4 +29,18 @@ final class ColimaProfileTests: XCTestCase {
         XCTAssertNil(ColimaService.profile(forContext: "desktop-linux"))
         XCTAssertNil(ColimaService.profile(forContext: ""))
     }
+
+    /// デモモードでは、案件名などが入りうるプロファイル名も置き換える(default はそのまま)
+    func testAnonymizeReplacesProfileNames() {
+        let snapshot = ColimaSnapshot(profile: "acme-corp", running: true, vmInfo: "プロファイル acme-corp ・ CPU 2",
+                                      containers: [], composeProjects: [],
+                                      profiles: [ColimaProfile(name: "default", running: true),
+                                                 ColimaProfile(name: "acme-corp", running: true),
+                                                 ColimaProfile(name: "beta-inc", running: false)])
+        let demo = ColimaService.anonymize(snapshot)
+        XCTAssertEqual(demo.profiles.map(\.name), ["default", "profile-1", "profile-2"])
+        XCTAssertEqual(demo.profiles.map(\.running), [true, true, false])
+        XCTAssertEqual(demo.profile, "profile-1")
+        XCTAssertEqual(demo.vmInfo, "プロファイル profile-1 ・ CPU 2")
+    }
 }
