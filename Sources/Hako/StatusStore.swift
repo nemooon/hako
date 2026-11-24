@@ -57,6 +57,8 @@ final class StatusStore {
     @ObservationIgnored private var snapshotTask: Task<Void, Never>?
     @ObservationIgnored private var statsTask: Task<Void, Never>?
     @ObservationIgnored private var diskUsageTask: Task<Void, Never>?
+    // 実行中のディスク使用量の取得を見捨てるときに進める(前の VM の結果を捨てるため)
+    @ObservationIgnored private var diskUsageToken = 0
     // 操作のたびに進める。操作前に始まった取得の結果で、操作後の状態を上書きしないために使う
     @ObservationIgnored private var generation = 0
     // 自分で実行した操作(stop など)による変化まで通知しないためのフラグ
@@ -102,8 +104,12 @@ final class StatusStore {
     func refreshDiskUsage() {
         guard busyMessage == nil, snapshot?.running == true, diskUsageTask == nil else { return }
         let started = generation
+        diskUsageToken += 1
+        let token = diskUsageToken
         diskUsageTask = Task {
             let usage = await backend.fetchDiskUsage()
+            // 別の VM に切り替わって見捨てた取得なら、結果も後片付けも新しい取得に任せる
+            guard token == diskUsageToken else { return }
             diskUsageTask = nil
             guard started == generation, snapshot?.running == true else { return }
             assign(\.diskUsage, usage)
@@ -155,8 +161,10 @@ final class StatusStore {
             assign(\.statsByID, [:])
             assign(\.diskUsage, [])
         } else if switchedVM {
-            // 別の VM を見るようになったので、前の VM の使用量を残さず取り直す
+            // 別の VM を見るようになったので、前の VM の使用量を残さず取り直す(取得中のものは見捨てる)
             assign(\.statsByID, [:])
+            diskUsageTask = nil
+            diskUsageToken += 1
             reloadDiskUsage()
         }
     }

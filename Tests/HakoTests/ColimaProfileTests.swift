@@ -17,6 +17,16 @@ final class ColimaProfileTests: XCTestCase {
         XCTAssertEqual(ColimaService.parseProfiles(""), [])
     }
 
+    /// docker 以外のランタイム(containerd など)のプロファイルは docker context が無く切り替えられないので出さない
+    func testParseProfilesSkipsNonDockerRuntime() {
+        let json = """
+        {"name":"default","status":"Running","runtime":"docker"}
+        {"name":"k8s","status":"Running","runtime":"containerd"}
+        {"name":"old","status":"Stopped"}
+        """
+        XCTAssertEqual(ColimaService.parseProfiles(json).map(\.name), ["default", "old"])
+    }
+
     func testDockerContextName() {
         XCTAssertEqual(ColimaProfile(name: "default", running: true).dockerContext, "colima")
         XCTAssertEqual(ColimaProfile(name: "work", running: true).dockerContext, "colima-work")
@@ -42,5 +52,14 @@ final class ColimaProfileTests: XCTestCase {
         XCTAssertEqual(demo.profiles.map(\.running), [true, true, false])
         XCTAssertEqual(demo.profile, "profile-1")
         XCTAssertEqual(demo.vmInfo, "プロファイル profile-1 ・ CPU 2")
+    }
+
+    /// 短いプロファイル名でも、CPU やメモリの数字まで書き換えない
+    func testAnonymizeKeepsVMNumbersForShortProfileName() {
+        let snapshot = ColimaSnapshot(profile: "2", running: true, vmInfo: "プロファイル 2 ・ CPU 2 ・ メモリ 2GB",
+                                      containers: [], composeProjects: [],
+                                      profiles: [ColimaProfile(name: "default", running: true),
+                                                 ColimaProfile(name: "2", running: true)])
+        XCTAssertEqual(ColimaService.anonymize(snapshot).vmInfo, "プロファイル profile-1 ・ CPU 2 ・ メモリ 2GB")
     }
 }

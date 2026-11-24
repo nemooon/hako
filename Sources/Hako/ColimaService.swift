@@ -260,9 +260,12 @@ enum ColimaService {
         if snapshot.profile != "default", profileMapping[snapshot.profile] == nil {
             profileMapping[snapshot.profile] = "profile-\(profileMapping.count + 1)"
         }
+        // vmInfo にプロファイル名が出るのは先頭の「プロファイル X」だけなので、そこだけ置き換える
+        // (全体を置換すると、短い名前のときに CPU やメモリの数字まで書き換わる)
         let vmInfo = snapshot.vmInfo.map { info in
-            profileMapping.sorted { $0.key.count > $1.key.count }
-                .reduce(info) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
+            let prefix = "プロファイル \(snapshot.profile)"
+            guard let mapped = profileMapping[snapshot.profile], info.hasPrefix(prefix) else { return info }
+            return "プロファイル \(mapped)" + info.dropFirst(prefix.count)
         }
 
         return ColimaSnapshot(
@@ -317,10 +320,12 @@ enum ColimaService {
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// `colima ls --json` の出力からプロファイル一覧を読む(Running 以外は停止中扱い)
+    /// `colima ls --json` の出力からプロファイル一覧を読む(Running 以外は停止中扱い)。
+    /// docker 以外のランタイム(containerd など)は docker context が作られず切り替えられないので外す
     static func parseProfiles(_ json: String) -> [ColimaProfile] {
         jsonLines(json).compactMap { line in
             guard let name = line["name"] as? String else { return nil }
+            if let runtime = line["runtime"] as? String, !runtime.isEmpty, runtime.lowercased() != "docker" { return nil }
             return ColimaProfile(name: name, running: (line["status"] as? String)?.lowercased() == "running")
         }
     }
