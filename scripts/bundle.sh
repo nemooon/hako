@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Hako"
 BUNDLE_ID="com.nemooon.hako"
-VERSION="0.7"
+VERSION="0.8"
 DIST="dist/${APP_NAME}.app"
 
 # アイコンのコンパイルに使う actool は Xcode 本体にしか含まれない
